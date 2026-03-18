@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    ports: 
+      - "5432:5432"
+  environment:
+    POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    POSTGRES_DB: ${POSTGRES_DB:-mlip}
+  
+  redis:
+    image: redis:7-alpine
+    ports: 
+      - "6379:6379"
+  
+  neo4j:
+    image: neo4j:5
+    ports: 
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/changeme}
+  
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085

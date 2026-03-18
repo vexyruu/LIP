@@ -1,0 +1,25 @@
+syntax = "proto3";
+package mlip.ml.v1;
+option go_package = "github.com/vexyruu/mlip/shared/pb;pb";
+
+service MLService {
+    rpc AnalyzeListing (ListingRequest) returns (ListingAnalysis){}
+}
+
+message ListingRequest {
+    string listing_id = 1;
+    string title = 2;
+    string description = 3;
+    string condition = 4;
+    string category_id = 5;
+}
+
+message ListingAnalysis {
+    string brand = 1;
+    string product = 2;
+    string size = 3;
+    bool policy_violation = 4;
+    double suggested_price = 5;
+    double price_lower_bound = 6;
+    double price_upper_bound = 7;
+}

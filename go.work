@@ -1,0 +1,9 @@
+go 1.26.1
+
+use (
+	./services/analysis-worker
+	./services/fraud-batch-job
+	./services/fraud-service
+	./services/listing-service
+	./shared/go
+)
