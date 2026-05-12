@@ -212,7 +212,7 @@ const file_ml_service_proto_rawDesc = "" +
 	"\x11price_lower_bound\x18\x06 \x01(\x01R\x0fpriceLowerBound\x12*\n" +
 	"\x11price_upper_bound\x18\a \x01(\x01R\x0fpriceUpperBound2X\n" +
 	"\tMLService\x12K\n" +
-	"\x0eAnalyzeListing\x12\x1a.mlip.ml.v1.ListingRequest\x1a\x1b.mlip.ml.v1.ListingAnalysis\"\x00B&Z$github.com/vexyruu/mlip/shared/pb;pbb\x06proto3"
+	"\x0eAnalyzeListing\x12\x1a.mlip.ml.v1.ListingRequest\x1a\x1b.mlip.ml.v1.ListingAnalysis\"\x00B&Z$github.com/vexyruu/LIP/shared/pb;pbb\x06proto3"
 
 var (
 	file_ml_service_proto_rawDescOnce sync.Once
