@@ -1,3 +1,3 @@
-module github.com/vexyruu/mlip/fraud-batch-job
+module github.com/vexyruu/LIP/fraud-batch-job
 
 go 1.26.1
