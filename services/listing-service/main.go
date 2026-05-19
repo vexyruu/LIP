@@ -11,7 +11,6 @@ import (
 
 	"github.com/vexyruu/LIP/shared/postgres"
 	"github.com/vexyruu/LIP/shared/publisher"
-	"github.com/go-chi/chi/v5"
 	"github.com/vexyruu/LIP/listing-service/handler"
 )
 
@@ -25,16 +24,18 @@ func main() {
 	if postgresConn == "" {
 		log.Fatal("POSTGRES_CONN is not set")
 	}
-	pubsubProjectID := os.Getenv("PUBSUB_PROJECT_ID")
+	pubsubProjectID := os.Getenv("GCP_PROJECT_ID")
 	if pubsubProjectID == "" {
-		log.Fatal("PUBSUB_PROJECT_ID is not set")
+		log.Fatal("GCP_PROJECT_ID is not set")
 	}
-	pubsubTopic := os.Getenv("PUBSUB_TOPIC")
+	pubsubTopic := os.Getenv("PUBSUB_TOPIC_LISTING_CREATED")
 	if pubsubTopic == "" {
-		log.Fatal("PUBSUB_TOPIC is not set")
+		log.Fatal("PUBSUB_TOPIC_LISTING_CREATED is not set")
 	}
-	// Context creation
-	ctx := context.Background()
+
+	// Signal handling
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
 
 	// Postgres pool creation
 	pool, err := postgres.NewPool(ctx, postgresConn)
@@ -50,20 +51,20 @@ func main() {
 	}
 	defer pub.Close()
 
-	r := chi.NewRouter()
 	h := &handler.Handler{
 		Pool: pool,
 		Pub: pub,
 		Topic: pubsubTopic,
 	}
 
-	r.Post("/v1/listings", h.CreateListing)
-	r.Get("/v1/listings/{id}", h.GetListing)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/listings", h.CreateListing)
+	mux.HandleFunc("GET /v1/listings/{id}", h.GetListing)
 
 	// Server creation
 	srv := &http.Server{
 		Addr:    ":" + port,
-		Handler: r,
+		Handler: mux,
 	}
 
 	// Server startup
@@ -76,18 +77,16 @@ func main() {
 	}()
 
 	// Signal Handling
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGTERM, os.Interrupt)
-	<-quit
+	<-ctx.Done()
+	stop()
 
-	// Server shutdown
-	log.Println("Shutting down...")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)	
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Failed to shutdown server: %v", err)
 	}
 	log.Println("Server shutdown complete")
+
 }
 
 

@@ -8,12 +8,14 @@ import (
 	"cloud.google.com/go/pubsub"
 )
 
+// Publisher struct to manage Pub/Sub topics and client
 type Publisher struct {
 	client *pubsub.Client
 	topics map[string]*pubsub.Topic
 	mu     sync.Mutex
 }
 
+// Creates a new Publisher instance
 func New(ctx context.Context, projectID string) (*Publisher, error) {
 	client, err := pubsub.NewClient(ctx, projectID)
 	if err != nil {
@@ -25,10 +27,12 @@ func New(ctx context.Context, projectID string) (*Publisher, error) {
 	}, nil
 }
 
+// Closes the Pub/Sub client
 func (p *Publisher) Close() error {
 	return p.client.Close()
 }
 
+// Publishes a message to a specific topic
 func (p *Publisher) Publish(ctx context.Context, topicID string, data []byte) error {
 	topic := p.topic(topicID)
 	result := topic.Publish(ctx, &pubsub.Message{Data: data})
@@ -38,6 +42,7 @@ func (p *Publisher) Publish(ctx context.Context, topicID string, data []byte) er
 	return nil
 }
 
+// Gets a topic from the cache or creates a new one
 func (p *Publisher) topic(topicID string) *pubsub.Topic {
 	p.mu.Lock()
 	defer p.mu.Unlock()

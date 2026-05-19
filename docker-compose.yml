@@ -3,11 +3,11 @@ services:
     image: postgres:15-alpine
     ports: 
       - "5432:5432"
-  environment:
-    POSTGRES_USER: ${POSTGRES_USER:-postgres}
-    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    POSTGRES_DB: ${POSTGRES_DB:-mlip}
-  
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-mlip}
+    
   redis:
     image: redis:7-alpine
     ports: 
