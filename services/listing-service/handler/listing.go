@@ -5,7 +5,6 @@ import(
 	"errors"
     "net/http"
 
-	"github.com/go-chi/chi/v5"
     "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5"
     "github.com/vexyruu/LIP/listing-service/model"
@@ -65,7 +64,7 @@ func (h *Handler) CreateListing(w http.ResponseWriter, r *http.Request) {
 
 // GetListing retrieves a listing from the database
 func (h *Handler) GetListing(w http.ResponseWriter, r *http.Request) {
-    id := chi.URLParam(r, "id")
+    id := r.PathValue("id")
 
     listing, err := store.GetListing(r.Context(), h.Pool, id)
     if err != nil {
