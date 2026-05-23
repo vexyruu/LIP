@@ -35,3 +35,8 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data
+*.tsv
+*.csv
+data/

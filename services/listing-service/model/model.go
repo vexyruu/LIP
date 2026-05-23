@@ -25,4 +25,6 @@ type ListingStatus struct {
     ExtractedBrand   *string  `json:"extracted_brand"`
     ExtractedProduct *string  `json:"extracted_product"`
     ExtractedSize    *string  `json:"extracted_size"`
+	PolicyViolation  *bool    `json:"policy_violation"`
 }
+

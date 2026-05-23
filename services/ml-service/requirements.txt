@@ -1,0 +1,11 @@
+grpcio
+grpcio-tools
+spacy
+en-core-web-sm
+pandas
+joblib
+numpy
+scipy
+scikit-learn==1.6.1
+onnxruntime
+pytest
