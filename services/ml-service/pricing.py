@@ -1,3 +1,4 @@
+"""XGBoost pricing inference via ONNX Runtime (see models/pricing_model.onnx)."""
 import os
 import re
 import joblib
@@ -126,25 +127,3 @@ def predict_price(
     lower = max(0.0, suggested - margin)
     upper = suggested + margin
     return round(suggested, 2), round(lower, 2), round(upper, 2)
-
-
-if __name__ == "__main__":
-    vec = _assemble_feature_vector(
-        title="Nike Air Max 90 size 10",
-        desc="Brand new with tags, free shipping",
-        condition="1",
-        shipping=0.0,
-        brand="Nike",
-        category="Men/Shoes/Athletic",
-    )
-    print("vector:", vec.shape, vec.dtype, np.isnan(vec).any())
-
-    suggested, lower, upper = predict_price(
-        title="Nike Air Max 90 size 10",
-        desc="Brand new with tags, free shipping",
-        condition="1",
-        shipping=0.0,
-        brand="Nike",
-        category="Men/Shoes/Athletic",
-    )
-    print("price:", suggested, lower, upper)

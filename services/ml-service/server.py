@@ -1,3 +1,4 @@
+"""MLIP ml-service — gRPC NER, policy, and XGBoost pricing (ONNX)."""
 import grpc
 import ml_service_pb2
 from concurrent.futures import ThreadPoolExecutor
