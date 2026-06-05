@@ -33,6 +33,7 @@ University / internship portfolio, this project is not affiliated with Mercari o
 ## Architecture
 
 LIP automates post-submit listing analysis: graph-based fraud scoring, ML price guidance, policy checks, and routing to **live**, **rejected**, or **human review**.
+<img width="1158" height="761" alt="image" src="https://github.com/user-attachments/assets/7373b0ff-16bc-4bcd-b862-ad469e91c3bb" />
 
 **Request flow:** `POST /v1/listings` inserts a row as `DRAFT` and writes a `listing.created` row to `pending_events` in the same transaction → outbox poller publishes to Pub/Sub → `analysis-worker` calls `fraud-service` (HTTP) for seller risk, then `ml-service` (gRPC) for NER + policy + ONNX pricing → listing updated to `LIVE`, `REJECTED`, or `UNDER_REVIEW`. If ml-service is down, the worker fails closed to `UNDER_REVIEW` and re-enqueues via the outbox (max 5 attempts).
 
