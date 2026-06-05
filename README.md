@@ -57,7 +57,7 @@ LIP automates post-submit listing analysis: graph-based fraud scoring, ML price 
 ```powershell
 git clone https://github.com/vexyruu/LIP.git
 cd LIP
-copy .env.example .env   # review vars; start-dev.ps1 sets them per process
+copy .env.example .env   # review vars: start-dev.ps1 sets them per process
 ```
 
 All env vars are documented in [`.env.example`](./.env.example).
