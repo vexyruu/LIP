@@ -1,25 +1,24 @@
 package main
 
-import(
-	"os"
-	"log"
+import (
 	"context"
-	"syscall"
-	"os/signal"
+	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-
-	"github.com/redis/go-redis/v9"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redis/go-redis/v9"
 	"github.com/vexyruu/LIP/fraud-service/handler"
+	"github.com/vexyruu/LIP/shared/risk"
 )
 
 func main() {
-	// Environment variable reads
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8081"
 	}
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
@@ -38,47 +37,44 @@ func main() {
 		log.Fatal("NEO4J_PASSWORD is not set")
 	}
 
-	// Signal handling
+	weights := risk.WeightsFromEnv()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 
-	// Redis connection
 	redisDB := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 	})
 	defer redisDB.Close()
 
-	// Neo4j connection
 	driver, err := neo4j.NewDriverWithContext(neo4jURI, neo4j.BasicAuth(neo4jUser, neo4jPassword, ""))
 	if err != nil {
 		log.Fatalf("Failed to create Neo4j driver: %v", err)
 	}
 	defer driver.Close(ctx)
 
-	// Verify Neo4j connection
 	if err := driver.VerifyConnectivity(ctx); err != nil {
 		log.Fatalf("Failed to verify Neo4j connectivity: %v", err)
 	}
-
 	log.Println("Connected to Neo4j")
 
-	// Handler creation
 	h := &handler.Handler{
-		Redis: redisDB,
-		Neo4j: driver,
+		Redis:   redisDB,
+		Neo4j:   driver,
+		Weights: weights,
 	}
 
-	// Server creation + routing
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/risk/{user_id}", h.GetRisk)
+	mux.HandleFunc("GET /v1/graph/{user_id}", h.GetGraph)
+	mux.HandleFunc("POST /v1/users/{user_id}/ban", h.BanUser)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
 	}
 
-	// Server startup
-	go func(){
+	go func() {
 		log.Printf("Fraud service listening on %s", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
@@ -87,7 +83,6 @@ func main() {
 	<-ctx.Done()
 	stop()
 
-	// Server shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
