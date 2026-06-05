@@ -42,9 +42,9 @@ LIP automates post-submit listing analysis: graph-based fraud scoring, ML price 
 |---------|------|-------|
 | `listing-service` | 8080 | Go REST API, outbox poller, uploads |
 | `fraud-service` | 8081 | Go HTTP, Neo4j + Redis risk |
-| `ml-service` | 50051 | Python gRPC - NER, policy, ONNX pricing |
+| `ml-service` | 50051 | Python gRPC: NER, policy, ONNX pricing |
 | `analysis-worker` | - | Go Pub/Sub consumer, pipeline orchestration |
-| `fraud-batch-job` | - | Go one-shot WCC + PageRank → Redis |
+| `fraud-batch-job` | - | Go one-shot WCC + PageRank to Redis |
 | `moderation-dashboard` | 3000 | Next.js moderator UI |
 | `listing-lab` *(dev harness)* | 3001 | Detachable test UI - not a platform component |
 
@@ -68,7 +68,7 @@ All env vars are documented in [`.env.example`](./.env.example).
 .\scripts\init-dev.ps1
 ```
 
-**Daily** (Pub/Sub emulator state is ephemeral, it recreate topics after every reboot):
+**Daily** (Pub/Sub emulator recreates topics after every reboot):
 
 ```powershell
 .\scripts\warm-dev.ps1
@@ -95,16 +95,16 @@ Base URLs: `http://localhost:8080` (listing-service) · `http://localhost:8081` 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/v1/listings` | Create listing → 202, status `processing`. Body: `user_id`, `title`, `description`, `price_ask`, `condition` (1–5), `category_id`, optional `images[]`. |
-| `GET` | `/v1/listings/{id}` | Detail with ML fields and `api_status`. |
-| `GET` | `/v1/listings` | Queue. Required: `status`. Optional: `tier`, `sort`, `page`, `limit`. |
-| `PATCH` | `/v1/listings/{id}` | Moderate `UNDER_REVIEW` listing. Body: `action`, `moderator_id`, `reason`. |
-| `GET` | `/v1/analytics/summary` | Dashboard aggregates. |
+| `POST` | `/v1/listings` | Create listing → 202, status `processing`. Body: `user_id`, `title`, `description`, `price_ask`, `condition` (1–5), `category_id`, optional `images[]` |
+| `GET` | `/v1/listings/{id}` | Detail with ML fields and `api_status` |
+| `GET` | `/v1/listings` | Queue. Required: `status`. Optional: `tier`, `sort`, `page`, `limit` |
+| `PATCH` | `/v1/listings/{id}` | Moderate `UNDER_REVIEW` listing. Body: `action`, `moderator_id`, `reason` |
+| `GET` | `/v1/analytics/summary` | Dashboard aggregates |
 | `GET` | `/v1/moderation/decisions` | Audit log. |
-| `GET` | `/v1/users/{id}` | Seller profile + ban audit. |
-| `POST` | `/v1/users/{id}/ban` | Ban seller, Neo4j + Postgres. |
-| `POST` | `/v1/uploads` | Start MinIO upload session. |
-| `POST` | `/v1/uploads/{id}/complete` | Finalize upload. |
+| `GET` | `/v1/users/{id}` | Seller profile + ban audit |
+| `POST` | `/v1/users/{id}/ban` | Ban seller, Neo4j + Postgres |
+| `POST` | `/v1/uploads` | Start MinIO upload session |
+| `POST` | `/v1/uploads/{id}/complete` | Finalize upload |
 
 DB statuses: `DRAFT` → `LIVE` / `UNDER_REVIEW` / `REJECTED` · API `api_status`: `processing` / `live` / `under_review` / `rejected`
 
@@ -112,9 +112,9 @@ DB statuses: `DRAFT` → `LIVE` / `UNDER_REVIEW` / `REJECTED` · API `api_status
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/risk/{user_id}` | Risk score, tier (`LOW`/`MEDIUM`/`HIGH`), velocity flags. |
-| `GET` | `/v1/graph/{user_id}` | Fraud graph neighborhood. |
-| `POST` | `/v1/users/{user_id}/ban` | Mark banned in Neo4j. |
+| `GET` | `/v1/risk/{user_id}` | Risk score, tier (`LOW`/`MEDIUM`/`HIGH`), velocity flags |
+| `GET` | `/v1/graph/{user_id}` | Fraud graph neighborhood |
+| `POST` | `/v1/users/{user_id}/ban` | Mark banned in Neo4j |
 
 ### ml-service (gRPC)
 
@@ -144,7 +144,7 @@ All numbers from **local Docker Compose** and not production SLAs. Run all evals
 | Band coverage (± median_ae) | **50.8%** |
 | vs category-median baseline | **24% lower MAE** |
 
-**Pricing : training notebook** (XGBoost on full Kaggle split; feature path differs slightly from live NER):
+**Pricing : training notebook** (XGBoost on full Kaggle split, feature path differs slightly from live NER):
 
 | Metric | Value |
 |--------|-------|
@@ -168,9 +168,30 @@ Integration tests (require running stack): `go test -tags=integration ./tests/in
 
 Local: `.\scripts\ci.ps1`
 
-Roadmap: retraining pipeline, BigQuery analytics, Terraform/GCP infrastructure.
-
 ---
+
+## What's next?
+
+Auth & identity
+- Replace hardcoded mod@mlip.dev with a real user store + password hashing
+- Add JWT or OAuth (SSO) for moderator login
+- Rate-limit the login endpoint
+
+Security
+- All gRPC connections are insecure (credentials/insecure)
+- Neo4j password changeme and MinIO minioadmin are hardcoded in scripts (fixing this by moving them to secrets)
+- No input sanitization on listing description before ML inference — could cause edge cases
+- CORS not configured on listing-service HTTP
+
+Data integrity
+- No idempotency key on listing creation (double-submit creates two listings)
+- Outbox poller has no dead-letter handling (could loop forever)
+- No soft-delete on listings (DELETE isn't implemented, banned users' listings just get status-flagged)
+
+Observability
+- No structured logging (just log.Printf, cant search or alert on logs)
+- No metrics (no Prometheus, no OpenTelemetry) (cant tell if the pipeline is slow or stuck)
+- No distributed tracing (cant follow a listing_id through all 4 services)
 
 ## Troubleshooting
 
