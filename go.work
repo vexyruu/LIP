@@ -6,4 +6,7 @@ use (
 	./services/fraud-service
 	./services/listing-service
 	./shared/go
+	./tests/integration
 )
+
+replace github.com/vexyruu/LIP/shared v0.0.0 => ./shared/go
