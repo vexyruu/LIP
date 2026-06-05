@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS uploads;
+DROP TYPE IF EXISTS upload_status;

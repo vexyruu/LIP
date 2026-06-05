@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-lab-bg: #0d1117;
+  --color-lab-panel: #161b22;
+  --color-lab-border: #30363d;
+  --color-lab-muted: #8b949e;
+  --color-lab-accent: #58a6ff;
+  --color-lab-lime: #b8ff00;
+  --color-lab-danger: #f85149;
+  --color-lab-success: #3fb950;
+  --color-lab-warn: #d29922;
+  --font-mono: ui-monospace, "Cascadia Code", "Segoe UI Mono", monospace;
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-lab-bg);
+  color: #f0f6fc;
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+.lab-input {
+  width: 100%;
+  border: 1px solid var(--color-lab-border);
+  background: var(--color-lab-bg);
+  color: #f0f6fc;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+.lab-input:focus {
+  outline: 2px solid var(--color-lab-accent);
+  outline-offset: 0;
+}
+
+.lab-label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-lab-muted);
+  margin-bottom: 0.35rem;
+}
+
+.lab-btn {
+  border: 1px solid var(--color-lab-border);
+  background: var(--color-lab-panel);
+  color: #f0f6fc;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.lab-btn:hover:not(:disabled) {
+  border-color: var(--color-lab-accent);
+  color: var(--color-lab-accent);
+}
+
+.lab-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lab-btn-primary {
+  background: var(--color-lab-lime);
+  color: #0a0a0a;
+  border-color: var(--color-lab-lime);
+  font-weight: 600;
+}
+
+.lab-btn-primary:hover:not(:disabled) {
+  background: #d4ff66;
+  border-color: #d4ff66;
+  color: #0a0a0a;
+}
+
+.lab-panel {
+  border: 1px solid var(--color-lab-border);
+  background: var(--color-lab-panel);
+}
+
+.lab-preset {
+  text-align: left;
+  padding: 0.625rem 0.75rem;
+}
+
+.lab-preset[data-active="true"] {
+  border-color: var(--color-lab-lime);
+  background: #1a2200;
+}
+
+.status-draft {
+  color: var(--color-lab-muted);
+}
+.status-under_review {
+  color: var(--color-lab-warn);
+}
+.status-live {
+  color: var(--color-lab-success);
+}
+.status-rejected {
+  color: var(--color-lab-danger);
+}

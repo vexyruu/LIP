@@ -1,81 +1,173 @@
-package handler 
+package handler
 
-import(
+import (
 	"encoding/json"
 	"errors"
-    "net/http"
+	"net/http"
+	"strconv"
 
-    "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5"
-    "github.com/vexyruu/LIP/listing-service/model"
-    "github.com/vexyruu/LIP/listing-service/store"
-    "github.com/vexyruu/LIP/shared/publisher"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vexyruu/LIP/listing-service/model"
+	"github.com/vexyruu/LIP/listing-service/store"
+	"github.com/vexyruu/LIP/shared/storage"
 )
 
-// Create handler struct that could access main.go's pool and pub
 type Handler struct {
-	Pool *pgxpool.Pool
-	Pub *publisher.Publisher
-	Topic string
+	Pool                   *pgxpool.Pool
+	FraudServiceURL        string
+	Storage                *storage.Client
+	UploadPublicBaseURL    string
+	AllowExternalImageURLs bool
 }
 
 func (h *Handler) CreateListing(w http.ResponseWriter, r *http.Request) {
 	var req model.CreateListingRequest
 
-	// Validate request body
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-
-	// Create listing in database
+	if err := req.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.validateListingImages(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	id, err := store.CreateListing(r.Context(), h.Pool, &req)
 	if err != nil {
 		http.Error(w, "failed to create listing", http.StatusInternalServerError)
 		return
 	}
 
-	// Publish listing to Pub/Sub
-	payload, _ := json.Marshal(map[string]any{
-		"listing_id": id,
-		"user_id": req.UserID,
-		"title": req.Title,
-		"description": req.Description,
-		"condition": req.Condition,
-		"category_id": req.CategoryID,
-		"price_ask": req.PriceAsk,
-	})
-	if err := h.Pub.Publish(r.Context(), h.Topic, payload); err != nil {
-		http.Error(w, "failed to publish listing", http.StatusInternalServerError)
-		return
-	}
-
-	// Send response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(model.CreateListingResponse{
 		ListingID: id,
-		Status: "processing",
-		ETA: 500,
+		Status:    model.APIStatusProcessing,
+		ETA:       500,
 	})
-
 }
-
 
 // GetListing retrieves a listing from the database
 func (h *Handler) GetListing(w http.ResponseWriter, r *http.Request) {
-    id := r.PathValue("id")
+	id := r.PathValue("id")
 
-    listing, err := store.GetListing(r.Context(), h.Pool, id)
-    if err != nil {
-        if errors.Is(err, pgx.ErrNoRows) {
-            http.Error(w, "listing not found", http.StatusNotFound)
-            return
-        }
-        http.Error(w, "failed to get listing", http.StatusInternalServerError)
-        return
-    }
+	listing, err := store.GetListing(r.Context(), h.Pool, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "listing not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get listing", http.StatusInternalServerError)
+		return
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(listing)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(listing)
+}
+
+// ListListings lists listings in the database
+func (h *Handler) ListListings(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	status := q.Get("status")
+	if status == "" {
+		http.Error(w, "status is required", http.StatusBadRequest)
+		return
+	}
+	page, _ := strconv.Atoi(q.Get("page"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+
+	resp, err := store.ListListings(r.Context(), h.Pool, model.ListListingsFilter{
+		Status: status,
+		Tier:   q.Get("tier"),
+		Sort:   q.Get("sort"),
+		Page:   page,
+		Limit:  limit,
+	})
+	if err != nil {
+		http.Error(w, "failed to list listings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) PatchListing(w http.ResponseWriter, r *http.Request) {
+	listingID := r.PathValue("id")
+	var req model.PatchListingRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if listingID == "" {
+		http.Error(w, "listing ID is required", http.StatusBadRequest)
+		return
+	}
+	if req.ModeratorID == "" {
+		http.Error(w, "moderator ID is required", http.StatusBadRequest)
+		return
+	}
+	if req.Action != "APPROVE" && req.Action != "REJECT" {
+		http.Error(w, "invalid action", http.StatusBadRequest)
+		return
+	}
+	if req.Action == "REJECT" && req.Reason == "" {
+		http.Error(w, "reason is required", http.StatusBadRequest)
+		return
+	}
+
+	// Moderate listing
+	resp, err := store.ModerateListing(r.Context(), h.Pool, listingID, &req)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "listing not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, store.ErrNotUnderReview) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, "failed to moderate listing", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// GetAnalytics gets the analytics summary for the listing service
+func (h *Handler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
+	summary, err := store.GetAnalyticsSummary(r.Context(), h.Pool)
+	if err != nil {
+		http.Error(w, "failed to get analytics", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
+}
+
+// ListModerationDecisions lists the moderation decisions for the listing service
+func (h *Handler) ListModerationDecisions(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+
+	resp, err := store.ListModerationDecisions(r.Context(), h.Pool, model.ListModerationDecisionsFilter{
+		Action: q.Get("action"),
+		Page:   page,
+		Limit:  limit,
+	})
+	if err != nil {
+		http.Error(w, "failed to list moderation decisions", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

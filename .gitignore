@@ -6,10 +6,10 @@
 *.dylib
 *.test
 *.out
-go.work.sum
 
 # Python
 venv/
+.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -36,7 +36,19 @@ out/
 .DS_Store
 Thumbs.db
 
-# Data
-*.tsv
+# Data — full Kaggle slice stays local; fixtures/ is committed for CI and clones
+services/ml-service/data/
 *.csv
-data/
+!services/ml-service/fixtures/*.csv
+
+# Brand catalog fixture (committed); other *.tsv files stay ignored
+*.tsv
+!services/ml-service/fixtures/
+!services/ml-service/fixtures/*.tsv
+
+# Local-only model export artifacts (inference uses ONNX + joblib sidecars below)
+services/ml-service/models/checkpoint_preprocess.pkl
+services/ml-service/models/pricing_model.ubj
+
+# Deprecated training notebook, not for repo
+services/ml-service/notebooks/train_pricing_model.ipynb
