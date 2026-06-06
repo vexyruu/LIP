@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useModerationDecisions } from "@/lib/hooks";
 import { shortUUID } from "@/lib/format";
-import type { ListModerationDecisionsResponse } from "@/lib/types";
 
 type ActionFilter = "ALL" | "APPROVE" | "REJECT" | "BAN";
 
@@ -40,33 +40,15 @@ function formatDecisionTime(timestamp: string): string {
 export function AuditClient() {
   const [action, setAction] = useState<ActionFilter>("ALL");
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(25);
-  const [data, setData] = useState<ListModerationDecisionsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const limit = 25;
 
-  const loadAudit = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-      if (action !== "ALL") {
-        params.set("action", action);
-      }
-      const res = await fetch(`/api/audit?${params.toString()}`);
-      if (!res.ok) throw new Error(await res.text());
-      setData((await res.json()) as ListModerationDecisionsResponse);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load audit");
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, limit, action]);
-
-  useEffect(() => {
-    loadAudit();
-  }, [loadAudit]);
+  const { data, error: swrError, isLoading, mutate } = useModerationDecisions({
+    action,
+    page,
+    limit,
+  });
+  const loading = isLoading && !data;
+  const error = swrError ? (swrError as Error).message : null;
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((data?.total ?? 0) / limit)),
@@ -90,7 +72,7 @@ export function AuditClient() {
         <div className="status-banner status-banner-error" role="alert">
           {error ?? "No data"}
         </div>
-        <button type="button" onClick={loadAudit} className="btn-secondary w-fit">
+        <button type="button" onClick={() => mutate()} className="btn-secondary w-fit">
           Try again
         </button>
       </div>

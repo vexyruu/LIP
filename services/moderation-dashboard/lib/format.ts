@@ -82,7 +82,6 @@ export function policyViolationLabel(violation: boolean | null): string {
   return "UNKNOWN";
 }
 
-/** Position of ask price on min–max bar (0–100). */
 export function priceMarkerPercent(
   ask: number,
   lower: number | null,

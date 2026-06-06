@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { BanModal } from "@/components/BanModal";
 import { ListingImage } from "@/components/ListingImage";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SectionHeader } from "@/components/SectionHeader";
+import { useSellerRisk, useUser, useUserListings } from "@/lib/hooks";
 import {
   formatPrice,
   formatRelativeTime,
@@ -13,12 +14,7 @@ import {
   shortUUID,
   tierScoreClass,
 } from "@/lib/format";
-import type {
-  ListUserListingsResponse,
-  SellerRisk,
-  UserProfile,
-  BanUserResponse,
-} from "@/lib/types";
+import type { BanUserResponse } from "@/lib/types";
 
 function statusBadgeClass(status: string): string {
   if (status === "BANNED") {
@@ -40,83 +36,39 @@ function listingStatusClass(status: string): string {
   }
 }
 
-export function UserClient({ userId }: { userId: string }) {
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [listings, setListings] = useState<ListUserListingsResponse | null>(
-    null
-  );
+export function UserClient({
+  userId,
+  canModerate,
+}: {
+  userId: string;
+  canModerate: boolean;
+}) {
   const [page, setPage] = useState(1);
-  const [limit] = useState(10);
-  const [loading, setLoading] = useState(true);
-  const [listingsLoading, setListingsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [listingsError, setListingsError] = useState<string | null>(null);
+  const limit = 10;
   const [banOpen, setBanOpen] = useState(false);
   const [banLoading, setBanLoading] = useState(false);
   const [banNotice, setBanNotice] = useState<string | null>(null);
-  const [sellerRisk, setSellerRisk] = useState<SellerRisk | null>(null);
-  const [riskLoading, setRiskLoading] = useState(true);
+  const [banError, setBanError] = useState<string | null>(null);
 
-  const loadUser = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/users/${userId}`);
-      if (!res.ok) throw new Error(await res.text());
-      setUser((await res.json()) as UserProfile);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load user");
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
+  const { data: user, error: userErr, isLoading: userLoading, mutate: mutateUser } =
+    useUser(userId);
+  const {
+    data: listings,
+    error: listingsErr,
+    isLoading: listingsIsLoading,
+    mutate: mutateListings,
+  } = useUserListings(userId, page, limit);
+  const {
+    data: sellerRisk,
+    isLoading: riskIsLoading,
+    mutate: mutateRisk,
+  } = useSellerRisk(userId);
 
-  const loadListings = useCallback(async () => {
-    setListingsLoading(true);
-    setListingsError(null);
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        limit: String(limit),
-      });
-      const res = await fetch(`/api/users/${userId}/listings?${params}`);
-      if (!res.ok) throw new Error(await res.text());
-      setListings((await res.json()) as ListUserListingsResponse);
-    } catch (err) {
-      setListingsError(
-        err instanceof Error ? err.message : "Failed to load listings"
-      );
-      setListings(null);
-    } finally {
-      setListingsLoading(false);
-    }
-  }, [limit, page, userId]);
-
-  useEffect(() => {
-    loadUser();
-  }, [loadUser]);
-
-  const loadRisk = useCallback(async () => {
-    setRiskLoading(true);
-    try {
-      const res = await fetch(`/api/users/${userId}/risk`);
-      if (!res.ok) throw new Error(await res.text());
-      setSellerRisk((await res.json()) as SellerRisk);
-    } catch {
-      setSellerRisk(null);
-    } finally {
-      setRiskLoading(false);
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    loadRisk();
-  }, [loadRisk]);
-
-  useEffect(() => {
-    loadListings();
-  }, [loadListings]);
+  const loading = userLoading && !user;
+  const error = banError ?? (userErr ? (userErr as Error).message : null);
+  const listingsLoading = listingsIsLoading && !listings;
+  const listingsError = listingsErr ? (listingsErr as Error).message : null;
+  const riskLoading = riskIsLoading && !sellerRisk;
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((listings?.total ?? 0) / limit)),
@@ -126,6 +78,7 @@ export function UserClient({ userId }: { userId: string }) {
   async function banUser(reason: string) {
     setBanLoading(true);
     setBanNotice(null);
+    setBanError(null);
     try {
       const res = await fetch(`/api/users/${userId}/ban`, {
         method: "POST",
@@ -140,11 +93,9 @@ export function UserClient({ userId }: { userId: string }) {
           ? `Seller banned. ${data.listings_flagged} LIVE listing${data.listings_flagged === 1 ? "" : "s"} moved to review.`
           : "Seller banned."
       );
-      await loadUser();
-      await loadListings();
-      await loadRisk();
+      await Promise.all([mutateUser(), mutateListings(), mutateRisk()]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to ban user");
+      setBanError(err instanceof Error ? err.message : "Failed to ban user");
     } finally {
       setBanLoading(false);
     }
@@ -183,10 +134,11 @@ export function UserClient({ userId }: { userId: string }) {
   if (!user) return null;
 
   const isBanned = user.status === "BANNED";
+  const showBanAction = !isBanned && canModerate;
 
   return (
     <>
-      <div className={`page-shell ${!isBanned ? "page-with-action-bar" : ""}`}>
+      <div className={`page-shell ${showBanAction ? "page-with-action-bar" : ""}`}>
         <PageHeader
           title={user.display_name}
           description={`Seller account · ${shortUUID(user.user_id)}`}
@@ -358,7 +310,7 @@ export function UserClient({ userId }: { userId: string }) {
               {listingsError}
               <button
                 type="button"
-                onClick={loadListings}
+                onClick={() => mutateListings()}
                 className="ml-3 underline"
               >
                 Retry
@@ -465,7 +417,7 @@ export function UserClient({ userId }: { userId: string }) {
         </section>
       </div>
 
-      {!isBanned && (
+      {showBanAction && (
         <div className="action-bar" role="region" aria-label="Seller actions">
           <div className="action-bar-inner">
             <button

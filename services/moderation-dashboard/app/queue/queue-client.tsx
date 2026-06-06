@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ListingImage } from "@/components/ListingImage";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { QueueStats } from "@/components/QueueStats";
+import { AutoRefreshIndicator } from "@/components/AutoRefreshIndicator";
+import { useQueue } from "@/lib/hooks";
 import {
   formatPrice,
   formatRelativeTime,
@@ -11,10 +14,9 @@ import {
   tierBadgeClass,
   tierScoreClass,
 } from "@/lib/format";
-import type { ListListingsResponse, SortOption, TierFilter } from "@/lib/types";
+import type { SortOption, TierFilter } from "@/lib/types";
 
 const TIER_FILTERS: TierFilter[] = ["ALL", "HIGH", "MEDIUM", "LOW"];
-const QUEUE_POLL_MS = 30_000;
 
 function ListingThumb({
   title,
@@ -39,52 +41,22 @@ export function QueueClient() {
   const [sort, setSort] = useState<SortOption>("risk_score");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
-  const [data, setData] = useState<ListListingsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
-  const loadQueue = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoading(true);
-    }
-    setError(null);
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        limit: String(limit),
-        sort,
-      });
-      if (tier !== "ALL") {
-        params.set("tier", tier);
-      }
-      const res = await fetch(`/api/queue?${params.toString()}`);
-      if (!res.ok) {
-        throw new Error(await res.text());
-      }
-      const json = (await res.json()) as ListListingsResponse;
-      setData(json);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load queue");
-      if (!silent) {
-        setData(null);
-      }
-    } finally {
-      if (!silent) {
-        setLoading(false);
-      }
-    }
-  }, [limit, page, sort, tier]);
+  const { data, error: swrError, isLoading, mutate } = useQueue({
+    page,
+    limit,
+    sort,
+    tier,
+  });
+  const error = swrError ? (swrError as Error).message : null;
+  const loading = isLoading && !data;
 
   useEffect(() => {
-    loadQueue();
-  }, [loadQueue]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void loadQueue(true);
-    }, QUEUE_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [loadQueue]);
+    if (data) {
+      setLastUpdated(Date.now());
+    }
+  }, [data]);
 
   const totalPages = useMemo(() => {
     if (!data) return 1;
@@ -107,14 +79,20 @@ export function QueueClient() {
         title="Review queue"
         description="Listings flagged for human moderation. Risk tier reflects the seller's fraud graph score, not listing price."
         meta={
-          <p className="font-mono text-xs text-on-surface-variant">
-            {loading
-              ? "Refreshing…"
-              : `${data?.total ?? 0} listing${data?.total === 1 ? "" : "s"} in queue`}
-            {!loading && " · auto-refreshes every 30s"}
-          </p>
+          <div className="flex flex-col items-start gap-1">
+            <p className="font-mono text-xs text-on-surface-variant">
+              {loading
+                ? "Refreshing…"
+                : `${data?.total ?? 0} listing${data?.total === 1 ? "" : "s"} in queue · auto-refreshes every 30s`}
+            </p>
+            <AutoRefreshIndicator lastUpdated={lastUpdated} />
+          </div>
         }
       />
+
+      {data && data.listings.length > 0 && (
+        <QueueStats listings={data.listings} total={data.total} />
+      )}
 
       <section className="panel" aria-label="Queue filters and sorting">
         <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -171,7 +149,7 @@ export function QueueClient() {
             <p>{error}</p>
             <button
               type="button"
-              onClick={() => loadQueue()}
+              onClick={() => mutate()}
               className="mt-2 font-mono text-xs underline underline-offset-2"
             >
               Try again
@@ -232,9 +210,22 @@ export function QueueClient() {
                           title={listing.title}
                           images={listing.images}
                         />
-                        <span className="font-semibold leading-snug">
-                          {listing.title}
-                        </span>
+                        <div className="flex flex-col gap-1">
+                          <span className="font-semibold leading-snug">
+                            {listing.title}
+                          </span>
+                          {listing.assigned_to && (
+                            <span className="inline-flex w-fit items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">
+                              <span
+                                className="material-symbols-outlined text-xs"
+                                aria-hidden
+                              >
+                                lock
+                              </span>
+                              In review
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="font-mono text-xs text-on-surface-variant">

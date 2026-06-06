@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -37,10 +39,20 @@ func main() {
 		log.Fatal("REDIS_ADDR is not set")
 	}
 
-	// Context creation
-	ctx := context.Background()
+	// parse the batch interval
+	var interval time.Duration
+	if raw := os.Getenv("BATCH_INTERVAL"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatalf("invalid BATCH_INTERVAL %q: %v", raw, err)
+		}
+		interval = parsed
+	}
 
-	// Neo4j connection
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	// create a new neo4j driver
 	driver, err := neo4j.NewDriverWithContext(neo4jURI, neo4j.BasicAuth(neo4jUser, neo4jPassword, ""))
 	if err != nil {
 		log.Fatalf("Failed to create Neo4j driver: %v", err)
@@ -53,7 +65,7 @@ func main() {
 
 	log.Println("Connected to Neo4j")
 
-	// Redis connection
+	// create a new redis client
 	redisDB := redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 	})
@@ -64,29 +76,62 @@ func main() {
 	}
 	log.Println("Connected to Redis")
 
-	// Run WCC
+	// if the batch interval is 0, run a single cycle and exit
+	if interval == 0 {
+		if err := runBatchCycle(ctx, driver, redisDB); err != nil {
+			log.Fatalf("batch job failed: %v", err)
+		}
+		return
+	}
+
+	// if the batch interval is not 0, run immediately, then on a fixed interval until signalled
+	log.Printf("scheduler mode: recomputing fraud scores every %s", interval)
+	if err := runBatchCycle(ctx, driver, redisDB); err != nil {
+		log.Printf("batch cycle failed: %v", err)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("shutdown signal received, stopping scheduler")
+			return
+		case <-ticker.C:
+			if err := runBatchCycle(ctx, driver, redisDB); err != nil {
+				log.Printf("batch cycle failed: %v", err)
+			}
+		}
+	}
+}
+
+
+// runBatchCycle executes one full WCC + PageRank pass and writes the resulting risk scores to Redis
+func runBatchCycle(ctx context.Context, driver neo4j.DriverWithContext, redisDB *redis.Client) error {
+	start := time.Now()
+
 	components, err := runWCC(ctx, driver)
 	if err != nil {
-		log.Fatalf("Failed to run WCC: %v", err)
+		return fmt.Errorf("WCC: %w", err)
 	}
-	log.Printf("WCC Complete: Found %d components", len(components))
+	log.Printf("WCC complete: found %d components", len(components))
 
-	// Run PageRank
 	pagerankScores, err := runPageRank(ctx, driver)
 	if err != nil {
-		log.Fatalf("Failed to run PageRank: %v", err)
+		return fmt.Errorf("pagerank: %w", err)
 	}
-	log.Printf("PageRank Complete: Found %d scores", len(pagerankScores))
+	log.Printf("PageRank complete: found %d scores", len(pagerankScores))
 
 	if err := dropGraph(ctx, driver); err != nil {
-		log.Printf("Warning: failed to drop graph projection: %v", err)
+		log.Printf("warning: failed to drop graph projection: %v", err)
 	}
 
-	// Compute scores
 	if err := writeBatchScores(ctx, redisDB, components, pagerankScores); err != nil {
-		log.Fatalf("Failed to compute scores: %v", err)
+		return fmt.Errorf("write scores: %w", err)
 	}
-	log.Printf("Batch job complete: %d users scored", len(components))
+
+	log.Printf("batch cycle complete: %d users scored in %s", len(components), time.Since(start))
+	return nil
 }
 
 // dropGraph drops the fraud-graph projection from the Neo4j database

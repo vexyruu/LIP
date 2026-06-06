@@ -1,25 +1,23 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { SESSION_COOKIE } from "@/lib/auth";
+import { SESSION_COOKIE, verifySession } from "@/lib/auth";
+import { canAccessPath, roleHome } from "@/lib/rbac";
 
 const PUBLIC_PATHS = ["/login", "/unauthorized"];
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (
-    pathname.startsWith("/api/auth") ||
-    pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico"
-  ) {
+  if (pathname.startsWith("/api/auth")) {
     return NextResponse.next();
   }
 
-  const session = request.cookies.get(SESSION_COOKIE)?.value;
+  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  const session = token ? await verifySession(token) : null;
 
   if (pathname === "/login") {
     if (session) {
-      return NextResponse.redirect(new URL("/queue", request.url));
+      return NextResponse.redirect(new URL(roleHome(session.role), request.url));
     }
     return NextResponse.next();
   }
@@ -29,12 +27,19 @@ export function proxy(request: NextRequest) {
   }
 
   if (!session) {
-    if (pathname.startsWith("/api/") && !pathname.startsWith("/api/auth")) {
+    if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("from", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  if (!canAccessPath(session.role, pathname)) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return NextResponse.redirect(new URL("/unauthorized", request.url));
   }
 
   return NextResponse.next();

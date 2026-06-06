@@ -6,6 +6,23 @@ Set-Location $Root
 
 Write-Host "== MLIP init-dev ==" -ForegroundColor Cyan
 
+function Put-PubSubResource {
+    param(
+        [string]$Uri,
+        [string]$Body = $null
+    )
+    try {
+        if ($Body) {
+            Invoke-RestMethod -Method Put -Uri $Uri -ContentType "application/json" -Body $Body | Out-Null
+        } else {
+            Invoke-RestMethod -Method Put -Uri $Uri | Out-Null
+        }
+    } catch {
+        if ($_.Exception.Response.StatusCode.value__ -eq 409) { return }
+        throw
+    }
+}
+
 function Wait-Postgres {
     param([int]$MaxAttempts = 30)
     Write-Host "Waiting for Postgres..." -ForegroundColor Yellow
@@ -18,14 +35,16 @@ function Wait-Postgres {
 }
 
 function Wait-PubSubEmulator {
-    param([int]$MaxAttempts = 30)
+    param([int]$MaxAttempts = 60)
     Write-Host "Waiting for Pub/Sub emulator..." -ForegroundColor Yellow
-    $probe = "http://localhost:8085/v1/projects/local-dev/topics/_init_probe"
+    $probe = "http://localhost:8085/v1/projects/local-dev/topics/init-probe"
     for ($i = 1; $i -le $MaxAttempts; $i++) {
         try {
             Invoke-RestMethod -Method Put -Uri $probe -ErrorAction Stop | Out-Null
             return
         } catch {
+            # Any HTTP response means the emulator is listening (even 400 on bad names).
+            if ($_.Exception.Response) { return }
             Start-Sleep -Seconds 1
         }
     }
@@ -36,8 +55,12 @@ function Wait-Neo4j {
     param([int]$MaxAttempts = 60)
     Write-Host "Waiting for Neo4j..." -ForegroundColor Yellow
     for ($i = 1; $i -le $MaxAttempts; $i++) {
-        docker compose exec -T neo4j cypher-shell -u neo4j -p changeme "RETURN 1" 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) { return }
+        try {
+            docker compose exec -T neo4j cypher-shell -u neo4j -p changeme "RETURN 1" 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return }
+        } catch {
+            # NativeCommandError from cypher-shell stderr under ErrorAction Stop; retry.
+        }
         Start-Sleep -Seconds 2
     }
     throw "Neo4j did not become ready in $($MaxAttempts * 2) seconds"
@@ -92,12 +115,48 @@ $ComposeProject = (Split-Path $Root -Leaf).ToLower()
 $DockerNetwork = "${ComposeProject}_default"
 Initialize-MinIO -NetworkName $DockerNetwork
 
-# Postgres migrations
+# Postgres migrations (tracked so init-dev is safe to re-run after partial failure)
 $MigrationDir = Join-Path $Root "shared\go\migrations"
-Get-ChildItem "$MigrationDir\*.up.sql" | Sort-Object Name | ForEach-Object {
-    Write-Host "Applying $($_.Name)..." -ForegroundColor Yellow
-    Get-Content $_.FullName | docker compose exec -T postgres psql -U postgres -d mlip
+
+function Initialize-MigrationTracking {
+    docker compose exec -T postgres psql -U postgres -d mlip -c @"
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"@ | Out-Null
+
+    $tracked = (docker compose exec -T postgres psql -U postgres -d mlip -t -c "SELECT COUNT(*) FROM schema_migrations;").Trim()
+    $hasUsers = (docker compose exec -T postgres psql -U postgres -d mlip -t -c "SELECT to_regclass('public.users') IS NOT NULL;").Trim()
+    if ($tracked -eq "0" -and $hasUsers -eq "t") {
+        Write-Host "Backfilling schema_migrations from existing schema..." -ForegroundColor Yellow
+        Get-ChildItem "$MigrationDir\*.up.sql" | Sort-Object Name | ForEach-Object {
+            $version = $_.BaseName
+            docker compose exec -T postgres psql -U postgres -d mlip -c `
+                "INSERT INTO schema_migrations (version) VALUES ('$version') ON CONFLICT DO NOTHING;" | Out-Null
+        }
+    }
 }
+
+function Apply-Migrations {
+    Initialize-MigrationTracking
+    Get-ChildItem "$MigrationDir\*.up.sql" | Sort-Object Name | ForEach-Object {
+        $version = $_.BaseName
+        $applied = (docker compose exec -T postgres psql -U postgres -d mlip -t -c `
+            "SELECT 1 FROM schema_migrations WHERE version = '$version';").Trim()
+        if ($applied -eq "1") {
+            Write-Host "Skipping $($_.Name) (already applied)..." -ForegroundColor DarkGray
+            return
+        }
+        Write-Host "Applying $($_.Name)..." -ForegroundColor Yellow
+        Get-Content $_.FullName | docker compose exec -T postgres psql -U postgres -d mlip
+        if ($LASTEXITCODE -ne 0) { throw "Migration $($_.Name) failed" }
+        docker compose exec -T postgres psql -U postgres -d mlip -c `
+            "INSERT INTO schema_migrations (version) VALUES ('$version');" | Out-Null
+    }
+}
+
+Apply-Migrations
 
 # Postgres seed
 Write-Host "Seeding Postgres..." -ForegroundColor Yellow
@@ -106,10 +165,16 @@ Get-Content "$Root\scripts\seed-dev.sql" | docker compose exec -T postgres psql 
 # Pub/Sub topic + subscription
 Write-Host "Creating Pub/Sub topic and subscription..." -ForegroundColor Yellow
 $base = "http://localhost:8085/v1/projects/local-dev"
-Invoke-RestMethod -Method Put -Uri "$base/topics/listing-created"
-Invoke-RestMethod -Method Put -Uri "$base/subscriptions/listing-created-sub" `
-    -ContentType "application/json" `
+Put-PubSubResource -Uri "$base/topics/listing-created"
+Put-PubSubResource -Uri "$base/subscriptions/listing-created-sub" `
     -Body '{"topic":"projects/local-dev/topics/listing-created"}'
+
+# Dead-letter topic + subscription (poison / retry-exhausted messages land here
+# so they can be inspected instead of disappearing or looping forever).
+Write-Host "Creating Pub/Sub dead-letter topic and subscription..." -ForegroundColor Yellow
+Put-PubSubResource -Uri "$base/topics/listing-created-dlt"
+Put-PubSubResource -Uri "$base/subscriptions/listing-created-dlt-sub" `
+    -Body '{"topic":"projects/local-dev/topics/listing-created-dlt"}'
 
 # Neo4j seed
 Wait-Neo4j

@@ -7,6 +7,7 @@ export type ListingQueueItem = {
   risk_tier: string | null;
   category_id: number;
   images: string[];
+  assigned_to: string | null;
   created_at: string;
 };
 
@@ -36,8 +37,15 @@ export type ListingDetail = {
   extracted_size: string | null;
   policy_violation: boolean | null;
   images: string[];
+  assigned_to: string | null;
+  assigned_at: string | null;
   created_at: string | null;
   updated_at: string | null;
+};
+
+export type AssignmentResponse = {
+  listing_id: string;
+  assigned_to: string | null;
 };
 
 export type TierFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW";

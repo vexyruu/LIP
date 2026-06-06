@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SectionHeader } from "@/components/SectionHeader";
-import type { AnalyticsSummary } from "@/lib/types";
+import { useAnalytics } from "@/lib/hooks";
 
 function formatNumber(n: number): string {
   return n.toLocaleString("en-US");
@@ -63,25 +63,9 @@ function StatCard({
 }
 
 export function AnalyticsClient() {
-  const [data, setData] = useState<AnalyticsSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/analytics");
-        if (!res.ok) throw new Error(await res.text());
-        setData((await res.json()) as AnalyticsSummary);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load analytics");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  const { data, error: swrError, isLoading } = useAnalytics();
+  const loading = isLoading && !data;
+  const error = swrError ? (swrError as Error).message : null;
 
   const chartBars = useMemo(() => {
     if (!data?.daily_submissions.length) return [];

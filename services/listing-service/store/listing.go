@@ -12,9 +12,6 @@ import (
 	"github.com/vexyruu/LIP/shared/outbox"
 )
 
-// CreateListing inserts a listing and its listing.created outbox event in a
-// single transaction. The event is published asynchronously by the outbox
-// poller, so a Pub/Sub outage can never leave a committed listing unanalyzed.
 func CreateListing(ctx context.Context, pool *pgxpool.Pool, req *model.CreateListingRequest) (string, error) {
 	images := req.Images
 	if images == nil {
@@ -71,10 +68,10 @@ func GetListing(ctx context.Context, pool *pgxpool.Pool, listingID string) (*mod
 	var l model.ListingStatus
 	err := pool.QueryRow(ctx,
 		`SELECT id, user_id, title, description, price_ask, condition, category_id, status, suggested_price, price_lower_bound, price_upper_bound,
-		 risk_tier, risk_score, extracted_brand, extracted_product, extracted_size, policy_violation, images, created_at, updated_at
+		 risk_tier, risk_score, extracted_brand, extracted_product, extracted_size, policy_violation, images, assigned_to, assigned_at, created_at, updated_at
 		 FROM listings WHERE id = $1`,
 		listingID,
-	).Scan(&l.ListingID, &l.UserID, &l.Title, &l.Description, &l.PriceAsk, &l.Condition, &l.CategoryID, &l.Status, &l.SuggestedPrice, &l.PriceLowerBound, &l.PriceUpperBound, &l.RiskTier, &l.RiskScore, &l.ExtractedBrand, &l.ExtractedProduct, &l.ExtractedSize, &l.PolicyViolation, &l.Images, &l.CreatedAt, &l.UpdatedAt)
+	).Scan(&l.ListingID, &l.UserID, &l.Title, &l.Description, &l.PriceAsk, &l.Condition, &l.CategoryID, &l.Status, &l.SuggestedPrice, &l.PriceLowerBound, &l.PriceUpperBound, &l.RiskTier, &l.RiskScore, &l.ExtractedBrand, &l.ExtractedProduct, &l.ExtractedSize, &l.PolicyViolation, &l.Images, &l.AssignedTo, &l.AssignedAt, &l.CreatedAt, &l.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +122,7 @@ func ListListings(ctx context.Context, pool *pgxpool.Pool, f model.ListListingsF
 	}
 
 	// Build query
-	query := `SELECT id, title, user_id, price_ask, risk_score, risk_tier, category_id, images, created_at FROM listings ` +
+	query := `SELECT id, title, user_id, price_ask, risk_score, risk_tier, category_id, images, assigned_to, created_at FROM listings ` +
 		where + ` ORDER BY ` + orderBy + ` LIMIT $3 OFFSET $4`
 
 	// Query listings
@@ -138,7 +135,7 @@ func ListListings(ctx context.Context, pool *pgxpool.Pool, f model.ListListingsF
 	listings := []model.ListingQueueItem{}
 	for rows.Next() {
 		var l model.ListingQueueItem
-		if err := rows.Scan(&l.ListingID, &l.Title, &l.UserID, &l.PriceAsk, &l.RiskScore, &l.RiskTier, &l.CategoryID, &l.Images, &l.CreatedAt); err != nil {
+		if err := rows.Scan(&l.ListingID, &l.Title, &l.UserID, &l.PriceAsk, &l.RiskScore, &l.RiskTier, &l.CategoryID, &l.Images, &l.AssignedTo, &l.CreatedAt); err != nil {
 			return nil, err
 		}
 		if l.Images == nil {
@@ -222,4 +219,52 @@ func ModerateListing(ctx context.Context, pool *pgxpool.Pool, listingID string, 
 		ListingID: listingID,
 		Status:    newStatus,
 	}, nil
+}
+
+// assign a listing for a moderator using optimistic concurrency
+func AssignListing(ctx context.Context, pool *pgxpool.Pool, listingID, moderatorID string) (*model.AssignListingResponse, error) {
+	var assigned string
+	err := pool.QueryRow(ctx,
+		`UPDATE listings SET assigned_to = $1, assigned_at = NOW()
+		 WHERE id = $2 AND status = 'UNDER_REVIEW' AND (assigned_to IS NULL OR assigned_to = $1)
+		 RETURNING assigned_to`,
+		moderatorID, listingID,
+	).Scan(&assigned)
+	if err == nil {
+		return &model.AssignListingResponse{ListingID: listingID, AssignedTo: &assigned}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	var status string
+	var holder *string
+	if qErr := pool.QueryRow(ctx,
+		`SELECT status, assigned_to FROM listings WHERE id = $1`,
+		listingID,
+	).Scan(&status, &holder); qErr != nil {
+		return nil, qErr
+	}
+	if status != "UNDER_REVIEW" {
+		return nil, ErrNotUnderReview
+	}
+	return nil, ErrAlreadyAssigned
+}
+
+// release a claim, but only if the caller currently holds it
+func UnassignListing(ctx context.Context, pool *pgxpool.Pool, listingID, moderatorID string) (*model.AssignListingResponse, error) {
+	var id string
+	err := pool.QueryRow(ctx,
+		`UPDATE listings SET assigned_to = NULL, assigned_at = NULL
+		 WHERE id = $1 AND assigned_to = $2
+		 RETURNING id`,
+		listingID, moderatorID,
+	).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotAssignedToYou
+		}
+		return nil, err
+	}
+	return &model.AssignListingResponse{ListingID: listingID, AssignedTo: nil}, nil
 }

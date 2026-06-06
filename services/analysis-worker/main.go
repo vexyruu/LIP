@@ -23,6 +23,7 @@ import (
 )
 
 const maxReanalysisAttempts = 5
+const maxDeliveryAttempts = 5
 
 // decideStatus decides the status of a listing based on the policy violation and risk tier
 func decideStatus(policyViolation bool, riskTier string) string {
@@ -97,16 +98,54 @@ func main() {
 
 	sub := client.Subscription(pubsubSubscription)
 
+	var dltTopic *pubsub.Topic
+	if dltTopicID := os.Getenv("PUBSUB_TOPIC_DEADLETTER"); dltTopicID != "" {
+		dltTopic = client.Topic(dltTopicID)
+		defer dltTopic.Stop()
+		log.Printf("dead-letter topic enabled: %s", dltTopicID)
+	}
+
+	deadLetter := func(ctx context.Context, data []byte, reason string) bool {
+		if dltTopic == nil {
+			log.Printf("no dead-letter topic configured, dropping message: %s", reason)
+			return true
+		}
+		result := dltTopic.Publish(ctx, &pubsub.Message{
+			Data:       data,
+			Attributes: map[string]string{"dead_letter_reason": reason},
+		})
+		if _, err := result.Get(ctx); err != nil {
+			log.Printf("failed to publish to dead-letter topic: %v", err)
+			return false
+		}
+		log.Printf("message dead-lettered: %s", reason)
+		return true
+	}
+
 	log.Println("analysis-worker listening on subscription:", pubsubSubscription)
 
 	// receive messages from the pubsub subscription
 	err = sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
 		log.Printf("Received event: %s", msg.Data)
+		retryOrDeadLetter := func(reason string) {
+			if msg.DeliveryAttempt != nil && *msg.DeliveryAttempt >= maxDeliveryAttempts {
+				if deadLetter(ctx, msg.Data, reason) {
+					msg.Ack()
+					return
+				}
+			}
+			msg.Nack()
+		}
 
+		// unmarshal the listing created event and check for malformed payload
 		var event apitypes.ListingCreatedEvent
 		if err := json.Unmarshal(msg.Data, &event); err != nil {
-			log.Printf("malformed payload, dropping message: %v", err)
-			msg.Ack()
+			log.Printf("malformed payload: %v", err)
+			if deadLetter(ctx, msg.Data, fmt.Sprintf("malformed payload: %v", err)) {
+				msg.Ack()
+			} else {
+				msg.Nack()
+			}
 			return
 		}
 	
@@ -127,7 +166,7 @@ func main() {
 		categoryPath, err := lookupCategoryPath(ctx, pool, event.CategoryID)
 		if err != nil {
 			log.Printf("failed to lookup category path: %v", err)
-			msg.Nack()
+			retryOrDeadLetter(fmt.Sprintf("category lookup failed: %v", err))
 			return
 		}
 
@@ -205,7 +244,7 @@ func main() {
 		)
 		if err != nil {
 			log.Printf("failed to update listing: %v", err)
-			msg.Nack()
+			retryOrDeadLetter(fmt.Sprintf("listing update failed: %v", err))
 			return
 		}
 

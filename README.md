@@ -6,48 +6,57 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![CI](https://img.shields.io/github/actions/workflow/status/vexyruu/LIP/ci.yml?label=CI)
 
-**MLIP** is a **learning and portfolio project** built to understand how Go services work in a polyglot microservice environment. The domain C2C listing moderation, fraud detection, and pricing gives realistic distributed systems problems without being a production product.
+**MLIP** is a **learning and portfolio project** built to understand how Go services work in a polyglot microservice environment. The domain (C2C listing moderation, fraud detection, and pricing) supplies realistic distributed systems problems without being a production product.
 
 **The primary goal is practicing Go** (HTTP APIs, Pub/Sub workers, batch jobs, shared libraries, SQL, gRPC clients) while integrating Python (ML inference) and TypeScript (moderator UI) as separate runtimes.
+
 ---
 
 ## About this project
 
 ### Why it exists
 
-I built LIP as a deliberate study of Go in a microservice environment: how to structure multiple Go modules under `go.work`, how a Go HTTP service owns transactions and an outbox poller while staying decoupled from analysis logic, how a Go worker handles partial failures without corrupting state, and how Go interoperates with non-Go runtimes through Protobuf/gRPC and JSON.
-The ML, graph fraud, and dashboard pieces are real and runnable in which they support the learning goal.
-**The main thing this repo is meant to demonstrate is designing and wiring Go-centric distributed flows**, not marketplace-scale production maturity due to the limitation of experience that i have so far.
+I built MLIP as a deliberate study of Go in a microservice environment: how to structure multiple Go modules under `go.work`, how a Go HTTP service owns transactions and an outbox poller while staying decoupled from analysis logic, how a Go worker handles partial failures without corrupting state, and how Go interoperates with non-Go runtimes through Protobuf/gRPC and JSON.
+
+The ML, graph fraud, and dashboard pieces are real and runnable; they support the learning goal. **The main thing this repo is meant to demonstrate is designing and wiring Go-centric distributed flows**, not marketplace-scale production maturity.
 
 ### AI-assisted development
 
-Parts of this codebase were built with AI coding tools (Cursor) as guidance, bootstrapping boilerplate, exploring unfamiliar APIs/Libraries, refactoring suggestions, and documentation. The Next.js UIs were scaffolded with AI, I wired API calls and local auth against the Go backend.
-I use AI like a reviewer and pair programmer, not as a substitute for understanding. Architecture choices, tradeoffs, and tests are mine to validate, I run the stack locally and fix breakages. Good questions to ask me: how the **outbox** avoids dual-write loss, why the worker **fails closed** when ML is down, or how **seller risk** differs from listing price risk.
+Parts of this codebase were built with AI coding tools (Cursor) for guidance, bootstrapping boilerplate, exploring unfamiliar APIs/libraries, refactoring suggestions, and documentation. The Next.js UIs were scaffolded with AI; I wired API calls and local auth against the Go backend.
+
+I use AI like a reviewer and pair programmer, not as a substitute for understanding. Architecture choices, tradeoffs, and tests are mine to validate. I run the stack locally and fix breakages. Good questions to ask me: how the **outbox** avoids dual-write loss, why the worker **fails closed** when ML is down, how **seller risk** differs from listing price risk, or how **listing assignment** uses an optimistic lock so two moderators cannot claim the same item.
 
 ### Disclaimer
 
-University / internship portfolio, this project is not affiliated with Mercari or any marketplace. Pricing models use the public [Mercari Price Suggestion Challenge](https://www.kaggle.com/competitions/mercari-price-suggestion-challenge) dataset for realistic training data. Deployment target is local Docker Compose, cloud infrastructure is on the roadmap.
+University / internship portfolio, not affiliated with Mercari or any marketplace. Pricing models use the public [Mercari Price Suggestion Challenge](https://www.kaggle.com/competitions/mercari-price-suggestion-challenge) dataset for realistic training data. Deployment target is local Docker Compose; cloud infrastructure is on the roadmap.
 
 ---
 
 ## Architecture
 
-LIP automates post-submit listing analysis: graph-based fraud scoring, ML price guidance, policy checks, and routing to **live**, **rejected**, or **human review**.
+MLIP automates post-submit listing analysis: graph-based fraud scoring, ML price guidance, policy checks, and routing to **live**, **rejected**, or **human review**.
+
 <img width="1158" height="761" alt="image" src="https://github.com/user-attachments/assets/7373b0ff-16bc-4bcd-b862-ad469e91c3bb" />
 
-**Request flow:** `POST /v1/listings` inserts a row as `DRAFT` and writes a `listing.created` row to `pending_events` in the same transaction → outbox poller publishes to Pub/Sub → `analysis-worker` calls `fraud-service` (HTTP) for seller risk, then `ml-service` (gRPC) for NER + policy + ONNX pricing → listing updated to `LIVE`, `REJECTED`, or `UNDER_REVIEW`. If ml-service is down, the worker fails closed to `UNDER_REVIEW` and re-enqueues via the outbox (max 5 attempts).
+**Request flow:** `POST /v1/listings` inserts a row as `DRAFT` and writes a `listing.created` row to `pending_events` in the same transaction → outbox poller publishes to Pub/Sub → `analysis-worker` calls `fraud-service` (HTTP) for seller risk, then `ml-service` (gRPC) for NER + policy + ONNX pricing → listing updated to `LIVE`, `REJECTED`, or `UNDER_REVIEW`. If ml-service is down, the worker fails closed to `UNDER_REVIEW` and re-enqueues via the outbox (max 5 attempts). Malformed or retry-exhausted Pub/Sub messages are routed to a **dead-letter topic** (`listing-created-dlt`) when `PUBSUB_TOPIC_DEADLETTER` is set.
 
-**Stack:** Go 1.26 · Python 3.12 · TypeScript · PostgreSQL 15 · Redis 7 · Neo4j 5 + GDS · Pub/Sub emulator · MinIO · `pgx/v5` · gRPC/Protobuf · XGBoost · spaCy · Next.js
+**Moderation flow:** flagged listings appear in the dashboard queue. A moderator can **claim** a listing (optimistic lock on `assigned_to`), review ML/fraud intel, then approve or reject. Seller bans cascade LIVE listings back into review and are recorded in Neo4j + Postgres.
+
+**Stack:** Go 1.26 · Python 3.12 · TypeScript · PostgreSQL 15 · Redis 7 · Neo4j 5 + GDS · Pub/Sub emulator · MinIO · `pgx/v5` · gRPC/Protobuf · XGBoost · spaCy · Next.js 16 · SWR
 
 | Service | Port | Notes |
 |---------|------|-------|
-| `listing-service` | 8080 | Go REST API, outbox poller, uploads |
+| `listing-service` | 8080 | Go REST API, outbox poller, uploads, assignment |
 | `fraud-service` | 8081 | Go HTTP, Neo4j + Redis risk |
 | `ml-service` | 50051 | Python gRPC: NER, policy, ONNX pricing |
-| `analysis-worker` | - | Go Pub/Sub consumer, pipeline orchestration |
-| `fraud-batch-job` | - | Go one-shot WCC + PageRank to Redis |
-| `moderation-dashboard` | 3000 | Next.js moderator UI |
-| `listing-lab` *(dev harness)* | 3001 | Detachable test UI - not a platform component |
+| `analysis-worker` | - | Go Pub/Sub consumer, pipeline orchestration, DLT |
+| `fraud-batch-job` | - | Go WCC + PageRank → Redis (one-shot or `BATCH_INTERVAL` scheduler) |
+| `moderation-dashboard` | 3000 | Next.js moderator UI (JWT + RBAC, SWR data layer) |
+| `listing-lab` *(dev harness)* | 3001 | Detachable test UI, not a platform component |
+
+**Dashboard auth:** signed JWT session cookies (`jose`, HS256), enforced by Next.js 16 `proxy.ts` at the network edge and again in mutation API routes. Three roles: `MODERATOR`, `ANALYST` (read-only), `ADMIN`. Moderator accounts are bcrypt-hashed in code for local dev (`lib/moderators.ts`); production would use a DB-backed store + OAuth/SSO.
+
+Sprint-by-sprint implementation notes: [`docs/sprints/`](./docs/sprints/).
 
 ---
 
@@ -58,33 +67,57 @@ LIP automates post-submit listing analysis: graph-based fraud scoring, ML price 
 ```powershell
 git clone https://github.com/vexyruu/LIP.git
 cd LIP
-copy .env.example .env   # review vars: start-dev.ps1 sets them per process
+copy .env.example .env   # optional; start-dev.ps1 sets vars per process
+```
+
+**One-time app setup** (not run by scripts):
+
+```powershell
+# ml-service
+cd services\ml-service
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+
+# moderation-dashboard
+cd ..\moderation-dashboard
+npm ci
 ```
 
 All env vars are documented in [`.env.example`](./.env.example).
 
-**First time** (runs migrations, seeds Postgres + Neo4j, starts Docker, configures MinIO):
+**First time** (migrations through `000010`, seeds Postgres + Neo4j, configures MinIO, runs fraud batch once):
 
 ```powershell
 .\scripts\init-dev.ps1
 ```
 
-**Daily** (Pub/Sub emulator recreates topics after every reboot):
+**Daily** (`start-dev.ps1` calls `warm-dev.ps1` automatically; Pub/Sub topics are recreated after every reboot):
 
 ```powershell
-.\scripts\warm-dev.ps1
 .\scripts\start-dev.ps1
 ```
 
 | URL | Purpose |
 |-----|---------|
-| http://localhost:3000/login | Dashboard - login: `mod@mlip.dev` |
+| http://localhost:3000/login | Moderation dashboard |
 | http://localhost:8080 | listing-service REST API |
 | http://localhost:3001 | Listing Lab dev harness (optional) |
 
+**Dashboard logins** (local dev only):
+
+| Email | Password | Role |
+|-------|----------|------|
+| `mod@mlip.dev` | `moderator123` | Moderator: queue, approve/reject, ban, claim |
+| `analyst@mlip.dev` | `analyst123` | Analyst: read-only (no moderate/ban) |
+| `admin@mlip.dev` | `admin123` | Admin: moderator capabilities + `/admin/*` (reserved) |
+
 **Stop:** `.\scripts\stop-dev.ps1` (add `-Docker` to also stop Compose services)
 
-**Dev sellers:** clean `00000000-...0002` · fraud ring `11111111-...` · mod `22222222-...`
+**Dev seller UUIDs:** clean `00000000-0000-0000-0000-000000000002` · fraud ring `11111111-1111-1111-1111-111111111111` · mod `22222222-2222-2222-2222-222222222222`
+
+**Re-run fraud scores** (Redis TTL is 1 hour): `.\scripts\run-fraud-batch.ps1`
 
 ---
 
@@ -97,12 +130,15 @@ Base URLs: `http://localhost:8080` (listing-service) · `http://localhost:8081` 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/listings` | Create listing → 202, status `processing`. Body: `user_id`, `title`, `description`, `price_ask`, `condition` (1–5), `category_id`, optional `images[]` |
-| `GET` | `/v1/listings/{id}` | Detail with ML fields and `api_status` |
+| `GET` | `/v1/listings/{id}` | Detail with ML fields, `assigned_to`, `api_status` |
 | `GET` | `/v1/listings` | Queue. Required: `status`. Optional: `tier`, `sort`, `page`, `limit` |
 | `PATCH` | `/v1/listings/{id}` | Moderate `UNDER_REVIEW` listing. Body: `action`, `moderator_id`, `reason` |
+| `POST` | `/v1/listings/{id}/assign` | Claim listing for review. Body: `moderator_id`. Optimistic lock, returns 409 if already claimed |
+| `DELETE` | `/v1/listings/{id}/assign` | Release claim. Body: `moderator_id` |
 | `GET` | `/v1/analytics/summary` | Dashboard aggregates |
-| `GET` | `/v1/moderation/decisions` | Audit log. |
+| `GET` | `/v1/moderation/decisions` | Audit log |
 | `GET` | `/v1/users/{id}` | Seller profile + ban audit |
+| `GET` | `/v1/users/{id}/listings` | Paginated seller listings |
 | `POST` | `/v1/users/{id}/ban` | Ban seller, Neo4j + Postgres |
 | `POST` | `/v1/uploads` | Start MinIO upload session |
 | `POST` | `/v1/uploads/{id}/complete` | Finalize upload |
@@ -119,7 +155,7 @@ DB statuses: `DRAFT` → `LIVE` / `UNDER_REVIEW` / `REJECTED` · API `api_status
 
 ### ml-service (gRPC)
 
-`MLService.AnalyzeListing` - proto: [`shared/proto/ml_service.proto`](shared/proto/ml_service.proto)
+`MLService.AnalyzeListing`, proto: [`shared/proto/ml_service.proto`](shared/proto/ml_service.proto)
 
 Input: `listing_id`, `title`, `description`, `condition`, `category_id` (category path string)  
 Output: `brand`, `product`, `size`, `policy_violation`, `suggested_price`, `price_lower_bound`, `price_upper_bound`
@@ -128,7 +164,7 @@ Output: `brand`, `product`, `size`, `policy_violation`, `suggested_price`, `pric
 
 ## Evaluation and metrics
 
-All numbers from **local Docker Compose** and not production SLAs. Run all evals: `.\scripts\run_eval.ps1`
+All numbers from **local Docker Compose**, not production SLAs. Run all evals: `.\scripts\run_eval.ps1`
 
 **Policy classifier** (rule-based, 121-row labeled fixture):
 
@@ -136,7 +172,7 @@ All numbers from **local Docker Compose** and not production SLAs. Run all evals
 |--------|-------|
 | F1 (violation class) | **0.986** |
 
-**Pricing : production inference path** (XGBoost/ONNX + NER brand, 10k sample, 80/20, seed 42):
+**Pricing: production inference path** (XGBoost/ONNX + NER brand, 10k sample, 80/20, seed 42):
 
 | Metric | Value |
 |--------|-------|
@@ -145,7 +181,7 @@ All numbers from **local Docker Compose** and not production SLAs. Run all evals
 | Band coverage (± median_ae) | **50.8%** |
 | vs category-median baseline | **24% lower MAE** |
 
-**Pricing : training notebook** (XGBoost on full Kaggle split, feature path differs slightly from live NER):
+**Pricing: training notebook** (XGBoost on full Kaggle split, feature path differs slightly from live NER):
 
 | Metric | Value |
 |--------|-------|
@@ -165,7 +201,12 @@ Integration tests (require running stack): `go test -tags=integration ./tests/in
 
 ## CI
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) on push/PR: Go `test`+`vet` for all services · `pytest` for ml-service · lint+build for dashboard and listing-lab.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) on push/PR:
+
+- Go `test` + `vet` for all services
+- `pytest` for ml-service (includes `spacy download en_core_web_sm`)
+- `lint` + `build` for dashboard and listing-lab
+- Dashboard unit tests: `npm test` (Vitest: auth, RBAC, formatters, hooks)
 
 Local: `.\scripts\ci.ps1`
 
@@ -173,40 +214,51 @@ Local: `.\scripts\ci.ps1`
 
 ## What's next?
 
-Auth & identity
-- Replace hardcoded mod@mlip.dev with a real user store + password hashing
-- Add JWT or OAuth (SSO) for moderator login
+**Auth & identity**
+- Move moderator accounts from in-code store to Postgres (`/admin/users` management UI)
+- OAuth/SSO provider (JWT session model is already in place)
 - Rate-limit the login endpoint
 
-Security
-- All gRPC connections are insecure (credentials/insecure)
-- Neo4j password changeme and MinIO minioadmin are hardcoded in scripts (fixing this by moving them to secrets)
-- No input sanitization on listing description before ML inference — could cause edge cases
+**Security**
+- gRPC connections are insecure (`credentials/insecure`)
+- Neo4j password `changeme` and MinIO `minioadmin` are hardcoded in scripts; move to secrets
 - CORS not configured on listing-service HTTP
+- Set a strong `SESSION_SECRET` for any non-local deploy
 
-Data integrity
+**Data integrity**
 - No idempotency key on listing creation (double-submit creates two listings)
-- Outbox poller has no dead-letter handling (could loop forever)
-- No soft-delete on listings (DELETE isn't implemented, banned users' listings just get status-flagged)
+- Outbox poller has no dead-letter path for permanently failed publishes (Pub/Sub consumer DLT exists, outbox `FAILED` rows need ops tooling)
+- No soft-delete on listings
 
-Observability
-- No structured logging (just log.Printf, cant search or alert on logs)
-- No metrics (no Prometheus, no OpenTelemetry) (cant tell if the pipeline is slow or stuck)
-- No distributed tracing (cant follow a listing_id through all 4 services)
+**Observability**
+- No `/health` endpoints on services
+- No structured logging (`log.Printf` only)
+- No metrics (Prometheus / OpenTelemetry)
+- No distributed tracing across the four-service pipeline
+
+**Product / ops**
+- `/admin/*` pages (config, user management): RBAC reserves the prefix, UI not built
+- Cloud deployment (Terraform, Cloud Run, Cloud Scheduler for batch job)
+- Model retraining pipeline (versioned bundles, promotion)
+
+---
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
 | `failed to publish listing` / outbox stuck | `.\scripts\warm-dev.ps1`, restart listing-service |
-| Listing stays `DRAFT` | Restart analysis-worker or ml-service |
-| All listings `REJECTED` in eval | Policy false positive, use neutral descriptions (no "contact", "line") |
+| Listing stays `DRAFT` / `processing` | Ensure analysis-worker and ml-service are running; check ml-service window for spaCy/model errors |
+| Queue or assign returns 500 | Apply migration `000010`: re-run `init-dev.ps1` on a fresh DB, or pipe `shared/go/migrations/000010_add_listing_assignment.up.sql` into Postgres |
+| Claim returns 409 | Another moderator already claimed the listing (expected optimistic-lock behavior) |
+| All listings `REJECTED` in eval | Policy false positive; use neutral descriptions (no "contact", "line") |
 | Image upload fails | `docker compose up -d`, re-run `init-dev.ps1` |
-| Everything HIGH risk | Switch to clean seller `00000000-...0002` |
+| Everything HIGH risk | Switch to clean seller `00000000-...0002`; or re-run `.\scripts\run-fraud-batch.ps1` if Redis scores expired (>1h) |
+| Dashboard shows raw `502:` errors | listing-service or fraud-service is down; check the service windows from `start-dev.ps1` |
 | Port in use | `.\scripts\stop-dev.ps1` |
 
 ---
 
 ## License
 
-MIT - see [LICENSE](./LICENSE). Copyright (c) 2026 Faiz Adli Nugraha.
+MIT. See [LICENSE](./LICENSE). Copyright (c) 2026 Faiz Adli Nugraha.

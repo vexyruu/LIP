@@ -1,12 +1,16 @@
 -- Local dev seed for MLIP (Postgres). Run after migrations:
 -- Get-Content scripts\seed-dev.sql | docker compose exec -T postgres psql -U postgres -d mlip
 
--- Clean seller (Listing Lab default) + fraud demo seller + moderator
+-- Clean seller (Listing Lab default) + fraud demo seller + moderator accounts.
+-- The moderator/analyst/admin rows back the dashboard login accounts so that
+-- moderation_decisions.moderator_id (FK -> users.id) resolves for any role.
 INSERT INTO users (id, email, display_name, status)
 VALUES
     ('00000000-0000-0000-0000-000000000002', 'clean@mlip.dev', 'Clean Seller', 'ACTIVE'),
     ('11111111-1111-1111-1111-111111111111', 'seller@mlip.dev', 'Fraud Ring Seller', 'ACTIVE'),
-    ('22222222-2222-2222-2222-222222222222', 'mod@mlip.dev', 'Moderator', 'ACTIVE')
+    ('22222222-2222-2222-2222-222222222222', 'mod@mlip.dev', 'Mona Moderator', 'ACTIVE'),
+    ('44444444-4444-4444-4444-444444444444', 'analyst@mlip.dev', 'Avery Analyst', 'ACTIVE'),
+    ('55555555-5555-5555-5555-555555555555', 'admin@mlip.dev', 'Adam Admin', 'ACTIVE')
 ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
     display_name = EXCLUDED.display_name,

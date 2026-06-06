@@ -141,6 +141,63 @@ func (h *Handler) PatchListing(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// claim a listing for the requesting moderator
+func (h *Handler) AssignListing(w http.ResponseWriter, r *http.Request) {
+	listingID := r.PathValue("id")
+	var req model.AssignListingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if listingID == "" || req.ModeratorID == "" {
+		http.Error(w, "listing ID and moderator ID are required", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := store.AssignListing(r.Context(), h.Pool, listingID, req.ModeratorID)
+	if err != nil {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			http.Error(w, "listing not found", http.StatusNotFound)
+		case errors.Is(err, store.ErrNotUnderReview), errors.Is(err, store.ErrAlreadyAssigned):
+			http.Error(w, err.Error(), http.StatusConflict)
+		default:
+			http.Error(w, "failed to assign listing", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// release the requesting moderator's claim on a listing
+func (h *Handler) UnassignListing(w http.ResponseWriter, r *http.Request) {
+	listingID := r.PathValue("id")
+	var req model.AssignListingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if listingID == "" || req.ModeratorID == "" {
+		http.Error(w, "listing ID and moderator ID are required", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := store.UnassignListing(r.Context(), h.Pool, listingID, req.ModeratorID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotAssignedToYou) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, "failed to release listing", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // GetAnalytics gets the analytics summary for the listing service
 func (h *Handler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
 	summary, err := store.GetAnalyticsSummary(r.Context(), h.Pool)
