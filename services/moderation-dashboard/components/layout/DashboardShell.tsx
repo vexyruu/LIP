@@ -4,8 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PRIMARY_NAV, usesMinimalLayout } from "@/lib/navigation";
+import type { ModSession } from "@/lib/auth";
+import { roleLabel } from "@/lib/rbac";
 
-export function DashboardShell({ children }: { children: React.ReactNode }) {
+export function DashboardShell({
+  children,
+  session,
+}: {
+  children: React.ReactNode;
+  session: ModSession | null;
+}) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -26,7 +34,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  const activeNav = PRIMARY_NAV.find((item) => item.isActive(pathname));
+  const navItems = PRIMARY_NAV.filter(
+    (item) => !item.roles || (session && item.roles.includes(session.role))
+  );
+  const activeNav = navItems.find((item) => item.isActive(pathname));
 
   return (
     <div className="dashboard-shell">
@@ -63,7 +74,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <nav className="sidebar-nav">
           <p className="sidebar-nav-label">Workspaces</p>
           <ul className="sidebar-nav-list">
-            {PRIMARY_NAV.map((item) => {
+            {navItems.map((item) => {
               const active = item.isActive(pathname);
               return (
                 <li key={item.href}>
@@ -98,8 +109,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               account_circle
             </span>
             <div className="sidebar-user-copy">
-              <span className="sidebar-user-email">mod@mlip.dev</span>
-              <span className="sidebar-user-role">Moderator</span>
+              <span className="sidebar-user-email">
+                {session?.email ?? "Not signed in"}
+              </span>
+              <span className="sidebar-user-role">
+                {session ? roleLabel(session.role) : "—"}
+              </span>
             </div>
           </div>
           <button

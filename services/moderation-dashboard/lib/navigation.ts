@@ -1,9 +1,12 @@
+import type { Role } from "./auth";
+
 export type NavItem = {
   href: string;
   label: string;
   shortLabel: string;
   icon: string;
   description: string;
+  roles?: Role[];
   isActive: (pathname: string) => boolean;
 };
 

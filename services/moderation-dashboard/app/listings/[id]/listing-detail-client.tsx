@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { AssignButton } from "@/components/AssignButton";
 import { ListingImage } from "@/components/ListingImage";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { RejectModal } from "@/components/RejectModal";
 import { SectionHeader } from "@/components/SectionHeader";
+import { useListing, useSellerRisk } from "@/lib/hooks";
 import {
   conditionLabel,
   formatPrice,
@@ -16,7 +18,7 @@ import {
   riskTierLabel,
   shortUUID,
 } from "@/lib/format";
-import type { ListingDetail, SellerRisk } from "@/lib/types";
+import type { ListingDetail } from "@/lib/types";
 
 function IntelRow({
   label,
@@ -66,51 +68,33 @@ function hasMlExtraction(listing: ListingDetail): boolean {
   );
 }
 
-export function ListingDetailClient({ listingId }: { listingId: string }) {
+export function ListingDetailClient({
+  listingId,
+  moderatorId,
+  canModerate,
+}: {
+  listingId: string;
+  moderatorId: string | null;
+  canModerate: boolean;
+}) {
   const router = useRouter();
-  const [listing, setListing] = useState<ListingDetail | null>(null);
-  const [sellerRisk, setSellerRisk] = useState<SellerRisk | null>(null);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: listing,
+    error: loadError,
+    isLoading,
+  } = useListing(listingId);
+  const { data: sellerRisk } = useSellerRisk(listing?.user_id);
   const [actionLoading, setActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  const loadListing = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/listings/${listingId}`);
-      if (!res.ok) {
-        throw new Error(await res.text());
-      }
-      const data = (await res.json()) as ListingDetail;
-      setListing(data);
-
-      try {
-        const riskRes = await fetch(`/api/users/${data.user_id}/risk`);
-        if (riskRes.ok) {
-          setSellerRisk((await riskRes.json()) as SellerRisk);
-        } else {
-          setSellerRisk(null);
-        }
-      } catch {
-        setSellerRisk(null);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load listing");
-      setListing(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [listingId]);
-
-  useEffect(() => {
-    loadListing();
-  }, [loadListing]);
+  const loading = isLoading && !listing;
+  const error =
+    actionError ?? (loadError ? (loadError as Error).message : null);
 
   const moderate = async (action: "APPROVE" | "REJECT", reason = "") => {
     setActionLoading(true);
-    setError(null);
+    setActionError(null);
     try {
       const res = await fetch(`/api/listings/${listingId}/moderate`, {
         method: "PATCH",
@@ -123,7 +107,7 @@ export function ListingDetailClient({ listingId }: { listingId: string }) {
       router.push("/queue");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Moderation failed");
+      setActionError(err instanceof Error ? err.message : "Moderation failed");
       setActionLoading(false);
       setRejectOpen(false);
     }
@@ -161,7 +145,8 @@ export function ListingDetailClient({ listingId }: { listingId: string }) {
 
   if (!listing) return null;
 
-  const canModerate = listing.status === "UNDER_REVIEW";
+  const isUnderReview = listing.status === "UNDER_REVIEW";
+  const showActions = isUnderReview && canModerate;
   const markerPct = priceMarkerPercent(
     listing.price_ask,
     listing.price_lower_bound,
@@ -170,7 +155,7 @@ export function ListingDetailClient({ listingId }: { listingId: string }) {
 
   return (
     <>
-      <div className={`page-shell ${canModerate ? "page-with-action-bar" : ""}`}>
+      <div className={`page-shell ${showActions ? "page-with-action-bar" : ""}`}>
         <PageHeader
           title={listing.title}
           description={`Status: ${listing.status} · Seller ${shortUUID(listing.user_id)}`}
@@ -398,6 +383,23 @@ export function ListingDetailClient({ listingId }: { listingId: string }) {
                 )}
             </section>
 
+            {isUnderReview && canModerate && (
+              <section className="panel p-4">
+                <SectionHeader title="Review assignment" />
+                <p className="mb-3 text-xs leading-relaxed text-on-surface-variant">
+                  Claim this listing so other moderators know it&apos;s being
+                  handled. Claims use an optimistic lock — if two people claim at
+                  once, only the first succeeds.
+                </p>
+                <AssignButton
+                  listingId={listing.listing_id}
+                  assignedTo={listing.assigned_to}
+                  moderatorId={moderatorId}
+                  reviewable={isUnderReview}
+                />
+              </section>
+            )}
+
             <div className="status-banner status-banner-info">
               <span className="material-symbols-outlined text-lg" aria-hidden>
                 info
@@ -411,7 +413,7 @@ export function ListingDetailClient({ listingId }: { listingId: string }) {
         </div>
       </div>
 
-      {canModerate && (
+      {showActions && (
         <div className="action-bar" role="region" aria-label="Moderation actions">
           <div className="action-bar-inner flex-col sm:flex-row">
             <button

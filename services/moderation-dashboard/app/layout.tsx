@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 import { DashboardShell } from "@/components/layout/DashboardShell";
 import { GridOverlay } from "@/components/GridOverlay";
+import { getSession } from "@/lib/session";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -21,11 +22,13 @@ export const metadata: Metadata = {
   description: "Marketplace Listing Intelligence Platform — moderation dashboard",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const session = await getSession();
+
   return (
     <html lang="en" className="dark h-full">
       <head>
@@ -37,7 +40,7 @@ export default function RootLayout({
       <body
         className={`${spaceGrotesk.variable} ${ibmPlexMono.variable} bg-background text-on-surface min-h-screen overflow-x-hidden font-sans antialiased`}
       >
-        <DashboardShell>{children}</DashboardShell>
+        <DashboardShell session={session}>{children}</DashboardShell>
         <GridOverlay />
       </body>
     </html>

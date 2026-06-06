@@ -1,3 +1,5 @@
+import { getSession } from "@/lib/session";
+import { canModerate } from "@/lib/rbac";
 import { UserClient } from "./user-client";
 
 export default async function UserPage({
@@ -6,5 +8,11 @@ export default async function UserPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <UserClient userId={id} />;
+  const session = await getSession();
+  return (
+    <UserClient
+      userId={id}
+      canModerate={session ? canModerate(session.role) : false}
+    />
+  );
 }
