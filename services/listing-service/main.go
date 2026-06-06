@@ -96,6 +96,8 @@ func main() {
 	mux.HandleFunc("GET /v1/listings/{id}", h.GetListing)
 	mux.HandleFunc("GET /v1/listings", h.ListListings)
 	mux.HandleFunc("PATCH /v1/listings/{id}", h.PatchListing)
+	mux.HandleFunc("POST /v1/listings/{id}/assign", h.AssignListing)
+	mux.HandleFunc("DELETE /v1/listings/{id}/assign", h.UnassignListing)
 	mux.HandleFunc("GET /v1/analytics/summary", h.GetAnalytics)
 	mux.HandleFunc("GET /v1/moderation/decisions", h.ListModerationDecisions)
 	mux.HandleFunc("GET /v1/users/{id}", h.GetUser)

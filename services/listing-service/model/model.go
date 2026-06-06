@@ -110,6 +110,8 @@ type ListingStatus struct {
 	ExtractedSize    *string    `json:"extracted_size"`
 	PolicyViolation  *bool      `json:"policy_violation"`
 	Images           []string   `json:"images"`
+	AssignedTo       *string    `json:"assigned_to"`
+	AssignedAt       *time.Time `json:"assigned_at"`
 	CreatedAt        *time.Time `json:"created_at"`
 	UpdatedAt        *time.Time `json:"updated_at"`
 }
@@ -123,7 +125,17 @@ type ListingQueueItem struct {
 	RiskTier   *string   `json:"risk_tier"`
 	CategoryID int       `json:"category_id"`
 	Images     []string  `json:"images"`
+	AssignedTo *string   `json:"assigned_to"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type AssignListingRequest struct {
+	ModeratorID string `json:"moderator_id"`
+}
+
+type AssignListingResponse struct {
+	ListingID  string  `json:"listing_id"`
+	AssignedTo *string `json:"assigned_to"`
 }
 
 type ListListingsResponse struct {

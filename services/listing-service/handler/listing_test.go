@@ -74,3 +74,52 @@ func TestCreateListing_Validation(t *testing.T) {
 		})
 	}
 }
+
+func TestAssignListing_InvalidJSON(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/listings/x/assign", strings.NewReader("not json"))
+	w := httptest.NewRecorder()
+	h.AssignListing(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestAssignListing_MissingFields(t *testing.T) {
+	const id = "123e4567-e89b-12d3-a456-426614174000"
+
+	tests := []struct {
+		name   string
+		pathID string
+		body   string
+	}{
+		{name: "missing moderator id", pathID: id, body: `{"moderator_id":""}`},
+		{name: "missing listing id", pathID: "", body: `{"moderator_id":"` + id + `"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &Handler{}
+			req := httptest.NewRequest(http.MethodPost, "/v1/listings/x/assign", strings.NewReader(tt.body))
+			if tt.pathID != "" {
+				req.SetPathValue("id", tt.pathID)
+			}
+			w := httptest.NewRecorder()
+			h.AssignListing(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("expected 400, got %d", w.Code)
+			}
+		})
+	}
+}
+
+func TestUnassignListing_MissingFields(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodDelete, "/v1/listings/x/assign", strings.NewReader(`{"moderator_id":""}`))
+	req.SetPathValue("id", "123e4567-e89b-12d3-a456-426614174000")
+	w := httptest.NewRecorder()
+	h.UnassignListing(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
