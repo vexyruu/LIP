@@ -61,6 +61,11 @@ func EffectiveTotalScore(b BatchScores, velocityScore float64, w Weights, direct
 	return s
 }
 
+// VelocityKey is the Redis key for a user's rolling listing-velocity counter
+func VelocityKey(userID string) string {
+	return "velocity:listings:" + userID
+}
+
 func VelocityScore(count int64, baseline float64) float64 {
 	return float64(count) / baseline
 }

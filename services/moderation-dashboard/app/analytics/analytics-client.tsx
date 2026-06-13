@@ -68,7 +68,7 @@ export function AnalyticsClient() {
   const error = swrError ? (swrError as Error).message : null;
 
   const chartBars = useMemo(() => {
-    if (!data?.daily_submissions.length) return [];
+    if (!data?.daily_submissions?.length) return [];
     const max = Math.max(...data.daily_submissions.map((d) => d.total), 1);
     return data.daily_submissions.map((d) => ({
       ...d,
@@ -81,6 +81,7 @@ export function AnalyticsClient() {
   const medPct = data ? tierPercent(data.by_risk_tier, "MEDIUM") : 0;
   const lowPct = data ? tierPercent(data.by_risk_tier, "LOW") : 0;
 
+  const recentDecisions = data?.recent_decisions ?? [];
   const showQueueAlert = (data?.under_review ?? 0) > 0;
 
   if (loading) {
@@ -210,7 +211,7 @@ export function AnalyticsClient() {
 
           <section className="panel overflow-hidden">
             <div className="panel-header">Recent moderation decisions</div>
-            {data.recent_decisions.length === 0 ? (
+            {recentDecisions.length === 0 ? (
               <p className="p-4 text-sm text-on-surface-variant">
                 No moderation decisions yet.
               </p>
@@ -229,7 +230,7 @@ export function AnalyticsClient() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.recent_decisions.map((row) => (
+                    {recentDecisions.map((row) => (
                       <tr key={`${row.listing_id}-${row.timestamp}`}>
                         <td className="text-on-surface-variant whitespace-nowrap">
                           {formatDecisionTime(row.timestamp)}
