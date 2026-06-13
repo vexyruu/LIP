@@ -33,7 +33,7 @@ Start-MlipService "MLIP fraud-service" "$Root\services\fraud-service" `
 
 # 3. listing-service :8080
 Start-MlipService "MLIP listing-service" "$Root\services\listing-service" `
-    "`$env:PORT='8080'; `$env:POSTGRES_CONN='postgres://postgres:postgres@localhost:5432/mlip'; `$env:GCP_PROJECT_ID='local-dev'; `$env:PUBSUB_EMULATOR_HOST='localhost:8085'; `$env:PUBSUB_TOPIC_LISTING_CREATED='listing-created'; `$env:FRAUD_SERVICE_URL='http://localhost:8081'; `$env:S3_ENDPOINT='http://localhost:9000'; `$env:S3_ACCESS_KEY='minioadmin'; `$env:S3_SECRET_KEY='minioadmin'; `$env:S3_BUCKET='mlip-listings'; `$env:S3_USE_SSL='false'; `$env:UPLOAD_PUBLIC_BASE_URL='http://localhost:9000/mlip-listings'; `$env:ALLOW_EXTERNAL_IMAGE_URLS='true'; go run ."
+    "`$env:PORT='8080'; `$env:POSTGRES_CONN='postgres://postgres:postgres@localhost:5432/mlip'; `$env:GCP_PROJECT_ID='local-dev'; `$env:PUBSUB_EMULATOR_HOST='localhost:8085'; `$env:PUBSUB_TOPIC_LISTING_CREATED='listing-created'; `$env:FRAUD_SERVICE_URL='http://localhost:8081'; `$env:REDIS_ADDR='localhost:6379'; `$env:S3_ENDPOINT='http://localhost:9000'; `$env:S3_ACCESS_KEY='minioadmin'; `$env:S3_SECRET_KEY='minioadmin'; `$env:S3_BUCKET='mlip-listings'; `$env:S3_USE_SSL='false'; `$env:UPLOAD_PUBLIC_BASE_URL='http://localhost:9000/mlip-listings'; `$env:ALLOW_EXTERNAL_IMAGE_URLS='true'; go run ."
 
 # 4. analysis-worker
 Start-MlipService "MLIP analysis-worker" "$Root\services\analysis-worker" `

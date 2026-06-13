@@ -9,9 +9,13 @@ import (
 )
 
 func GetAnalyticsSummary(ctx context.Context, pool *pgxpool.Pool) (*model.AnalyticsSummary, error) {
+	// Initialize slices and maps so an empty DB serializes to [] / {} rather
+	// than JSON null, which the dashboard treats as arrays/objects.
 	summary := &model.AnalyticsSummary{
-		ByStatus:   map[string]int{},
-		ByRiskTier: map[string]int{},
+		ByStatus:         map[string]int{},
+		ByRiskTier:       map[string]int{},
+		DailySubmissions: []model.DailySubmissionCount{},
+		RecentDecisions:  []model.RecentModerationRow{},
 	}
 
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM listings`).Scan(&summary.TotalListings); err != nil {

@@ -112,8 +112,11 @@ func ListListings(ctx context.Context, pool *pgxpool.Pool, f model.ListListingsF
 		tier = &f.Tier
 	}
 
-	// Build WHERE clause
-	where := `WHERE status = $1 AND ($2::text IS NULL OR risk_tier = $2)`
+	// UNSCORED matches rows where risk_tier IS NULL (fraud lookup never succeeded).
+	where := `WHERE status = $1
+	  AND ($2::text IS NULL
+	       OR ($2 = 'UNSCORED' AND risk_tier IS NULL)
+	       OR risk_tier = $2)`
 
 	// Count total listings
 	var total int
@@ -184,10 +187,11 @@ func ModerateListing(ctx context.Context, pool *pgxpool.Pool, listingID string, 
 	defer tx.Rollback(ctx)
 
 	var currentStatus string
+	var assignedTo *string
 	err = tx.QueryRow(ctx,
-		`SELECT status FROM listings WHERE id = $1 FOR UPDATE`,
+		`SELECT status, assigned_to FROM listings WHERE id = $1 FOR UPDATE`,
 		listingID,
-	).Scan(&currentStatus)
+	).Scan(&currentStatus, &assignedTo)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, pgx.ErrNoRows
@@ -197,6 +201,9 @@ func ModerateListing(ctx context.Context, pool *pgxpool.Pool, listingID string, 
 
 	if currentStatus != "UNDER_REVIEW" {
 		return nil, ErrNotUnderReview
+	}
+	if assignedTo != nil && *assignedTo != req.ModeratorID {
+		return nil, ErrAssignedToOther
 	}
 
 	// Update listing status

@@ -164,6 +164,10 @@ func ValidateImageHeader(contentType string, header []byte) error {
 	return nil
 }
 
+func (c *Client) DeleteObject(ctx context.Context, objectKey string) error {
+	return c.minio.RemoveObject(ctx, c.bucket, objectKey, minio.RemoveObjectOptions{})
+}
+
 func ManagedURL(publicBaseURL, rawURL string) bool {
 	base := strings.TrimRight(publicBaseURL, "/")
 	return strings.HasPrefix(strings.TrimSpace(rawURL), base+"/")

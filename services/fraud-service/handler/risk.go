@@ -23,14 +23,12 @@ type Handler struct {
 func (h *Handler) GetRisk(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("user_id")
 
-	key := fmt.Sprintf("velocity:listings:%s", userID)
-	count, err := h.Redis.Incr(r.Context(), key).Result()
-	if err != nil {
-		http.Error(w, "failed to increment velocity counter", http.StatusInternalServerError)
+	count, err := h.Redis.Get(r.Context(), risk.VelocityKey(userID)).Int64()
+	if err == redis.Nil {
+		count = 0
+	} else if err != nil {
+		http.Error(w, "failed to read velocity counter", http.StatusInternalServerError)
 		return
-	}
-	if count == 1 {
-		h.Redis.Expire(r.Context(), key, time.Hour)
 	}
 
 	velScore := risk.DefaultVelocityBaseline(count)

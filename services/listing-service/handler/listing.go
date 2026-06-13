@@ -1,15 +1,20 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"github.com/vexyruu/LIP/listing-service/model"
 	"github.com/vexyruu/LIP/listing-service/store"
+	"github.com/vexyruu/LIP/shared/risk"
 	"github.com/vexyruu/LIP/shared/storage"
 )
 
@@ -17,6 +22,7 @@ type Handler struct {
 	Pool                   *pgxpool.Pool
 	FraudServiceURL        string
 	Storage                *storage.Client
+	Redis                  *redis.Client
 	UploadPublicBaseURL    string
 	AllowExternalImageURLs bool
 }
@@ -42,6 +48,8 @@ func (h *Handler) CreateListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recordListingVelocity(r.Context(), req.UserID)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(model.CreateListingResponse{
@@ -49,6 +57,28 @@ func (h *Handler) CreateListing(w http.ResponseWriter, r *http.Request) {
 		Status:    model.APIStatusProcessing,
 		ETA:       500,
 	})
+}
+
+// best-effort: a Redis failure must never block or fail listing creation.
+func (h *Handler) recordListingVelocity(ctx context.Context, userID string) {
+	if h.Redis == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+
+	key := risk.VelocityKey(userID)
+	count, err := h.Redis.Incr(ctx, key).Result()
+	if err != nil {
+		log.Printf("velocity incr failed for user %s: %v", userID, err)
+		return
+	}
+	// Open a fresh 1h window on the first listing in the window.
+	if count == 1 {
+		if err := h.Redis.Expire(ctx, key, time.Hour).Err(); err != nil {
+			log.Printf("velocity expire failed for user %s: %v", userID, err)
+		}
+	}
 }
 
 // GetListing retrieves a listing from the database
@@ -132,6 +162,10 @@ func (h *Handler) PatchListing(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, store.ErrNotUnderReview) {
 			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		if errors.Is(err, store.ErrAssignedToOther) {
+			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
 		http.Error(w, "failed to moderate listing", http.StatusInternalServerError)

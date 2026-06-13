@@ -104,7 +104,9 @@ func (p *Poller) processBatch(ctx context.Context) (int, error) {
 	rows, err := tx.Query(ctx,
 		`SELECT id, payload, retry_count
 		 FROM pending_events
-		 WHERE status = 'PENDING' AND retry_count < $1
+		 WHERE status = 'PENDING'
+		   AND retry_count < $1
+		   AND (next_retry_at IS NULL OR next_retry_at <= NOW())
 		 ORDER BY created_at
 		 LIMIT $2
 		 FOR UPDATE SKIP LOCKED`,
@@ -138,16 +140,21 @@ func (p *Poller) processBatch(ctx context.Context) (int, error) {
 
 	for _, pe := range batch {
 		if err := p.Pub.Publish(ctx, p.Topic, pe.payload); err != nil {
+			nextRetry := pe.retry + 1
 			status := StatusPending
-			if pe.retry+1 >= MaxRetries {
+			if nextRetry >= MaxRetries {
 				status = StatusFailed
-				log.Printf("outbox: event %s parked as FAILED after %d attempts: %v", pe.id, pe.retry+1, err)
+				log.Printf("outbox: event %s parked as FAILED after %d attempts: %v", pe.id, nextRetry, err)
 			} else {
-				log.Printf("outbox: publish failed for event %s (attempt %d): %v", pe.id, pe.retry+1, err)
+				log.Printf("outbox: publish failed for event %s (attempt %d): %v", pe.id, nextRetry, err)
 			}
+			// Schedule the next attempt with exponential backoff: 10s * 2^retry (10s, 20s, 40s, 80s, 160s).
 			if _, e := tx.Exec(ctx,
-				`UPDATE pending_events SET retry_count = retry_count + 1, status = $2 WHERE id = $1`,
-				pe.id, status,
+				`UPDATE pending_events
+				 SET retry_count = $2, status = $3,
+				     next_retry_at = NOW() + (INTERVAL '10 seconds' * power(2, $4))
+				 WHERE id = $1`,
+				pe.id, nextRetry, status, pe.retry,
 			); e != nil {
 				return 0, e
 			}

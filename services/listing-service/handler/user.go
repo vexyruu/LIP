@@ -12,6 +12,38 @@ import (
 	"github.com/vexyruu/LIP/shared/apitypes"
 )
 
+func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if body.Email == "" || body.DisplayName == "" {
+		http.Error(w, "email and display_name are required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := store.CreateUser(r.Context(), h.Pool, store.CreateUserRequest{
+		Email:       body.Email,
+		DisplayName: body.DisplayName,
+	})
+	if err != nil {
+		if err.Error() == "email already registered" {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, "failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(user)
+}
+
 func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("id")
 
