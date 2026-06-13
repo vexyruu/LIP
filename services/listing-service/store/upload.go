@@ -12,20 +12,21 @@ import (
 var ErrUploadNotFound = errors.New("upload not found")
 
 type UploadRecord struct {
-	ID          string
-	UserID      string
-	ObjectKey   string
-	PublicURL   string
-	ContentType string
-	SizeBytes   int64
-	Status      string
-	ExpiresAt   time.Time
+	ID               string
+	UserID           string
+	ObjectKey        string
+	PublicURL        string
+	ContentType      string
+	SizeBytes        int64
+	Status           string
+	ExpiresAt        time.Time
+	OriginalFilename string
 }
 
 func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id string, rec *UploadRecord) error {
 	_, err := pool.Exec(ctx,
-		`INSERT INTO uploads (id, user_id, object_key, public_url, content_type, size_bytes, status, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', $7)`,
+		`INSERT INTO uploads (id, user_id, object_key, public_url, content_type, size_bytes, status, expires_at, original_filename)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', $7, $8)`,
 		id,
 		rec.UserID,
 		rec.ObjectKey,
@@ -33,6 +34,7 @@ func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id string, rec *Uploa
 		rec.ContentType,
 		rec.SizeBytes,
 		rec.ExpiresAt,
+		rec.OriginalFilename,
 	)
 	return err
 }
@@ -40,7 +42,7 @@ func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id string, rec *Uploa
 func GetUpload(ctx context.Context, pool *pgxpool.Pool, uploadID string) (*UploadRecord, error) {
 	var rec UploadRecord
 	err := pool.QueryRow(ctx,
-		`SELECT id, user_id, object_key, public_url, content_type, size_bytes, status, expires_at
+		`SELECT id, user_id, object_key, public_url, content_type, size_bytes, status, expires_at, original_filename
 		 FROM uploads WHERE id = $1`,
 		uploadID,
 	).Scan(
@@ -52,6 +54,7 @@ func GetUpload(ctx context.Context, pool *pgxpool.Pool, uploadID string) (*Uploa
 		&rec.SizeBytes,
 		&rec.Status,
 		&rec.ExpiresAt,
+		&rec.OriginalFilename,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -74,6 +77,29 @@ func MarkUploadReady(ctx context.Context, pool *pgxpool.Pool, uploadID string) e
 		return ErrUploadNotFound
 	}
 	return nil
+}
+
+// returns object keys so the caller is responsible for deleting the backing S3 objects.
+func PurgeExpiredUploads(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+	rows, err := pool.Query(ctx,
+		`DELETE FROM uploads
+		 WHERE status = 'PENDING' AND expires_at < NOW()
+		 RETURNING object_key`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
 }
 
 func VerifyUploadReady(ctx context.Context, pool *pgxpool.Pool, userID, publicURL string) (bool, error) {

@@ -47,12 +47,13 @@ func (h *Handler) CreateUpload(w http.ResponseWriter, r *http.Request) {
 	uploadID = id
 
 	if err := store.CreateUpload(r.Context(), h.Pool, uploadID, &store.UploadRecord{
-		UserID:      req.UserID,
-		ObjectKey:   objectKey,
-		PublicURL:   publicURL,
-		ContentType: req.ContentType,
-		SizeBytes:   req.SizeBytes,
-		ExpiresAt:   expiresAt,
+		UserID:           req.UserID,
+		ObjectKey:        objectKey,
+		PublicURL:        publicURL,
+		ContentType:      req.ContentType,
+		SizeBytes:        req.SizeBytes,
+		ExpiresAt:        expiresAt,
+		OriginalFilename: req.Filename,
 	}); err != nil {
 		http.Error(w, "failed to create upload", http.StatusInternalServerError)
 		return
