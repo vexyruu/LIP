@@ -25,10 +25,18 @@ import (
 const maxReanalysisAttempts = 5
 const maxDeliveryAttempts = 5
 
-// decideStatus decides the status of a listing based on the policy violation and risk tier
-func decideStatus(policyViolation bool, riskTier string) string {
+// timeout prevents a hung fraud-service from blocking the message handler.
+var httpClient = &http.Client{Timeout: 5 * time.Second}
+
+// BURST_LISTING_VELOCITY (>30 listings/hr) forces UNDER_REVIEW regardless of risk tier.
+func decideStatus(policyViolation bool, riskTier string, velocityFlags []string) string {
 	if policyViolation {
 		return "REJECTED"
+	}
+	for _, f := range velocityFlags {
+		if f == "BURST_LISTING_VELOCITY" {
+			return "UNDER_REVIEW"
+		}
 	}
 	if riskTier == "HIGH" {
 		return "UNDER_REVIEW"
@@ -149,16 +157,19 @@ func main() {
 			return
 		}
 	
-		// get the risk tier and score from the fraud-service
+		// get the risk tier and score from the fraud-service.
 		fraudResp := apitypes.RiskResponse{RiskTier: "LOW", RiskScore: 0}
-		if resp, err := http.Get(fmt.Sprintf("%s/v1/risk/%s", fraudServiceURL, event.UserID)); err != nil {
-			log.Printf("fraud-service unavailable, degrading to LOW: %v", err)
+		fraudOK := false
+		if resp, err := httpClient.Get(fmt.Sprintf("%s/v1/risk/%s", fraudServiceURL, event.UserID)); err != nil {
+			log.Printf("fraud-service unavailable, holding for review: %v", err)
 		} else {
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				log.Printf("fraud-service returned %d, degrading to LOW", resp.StatusCode)
+				log.Printf("fraud-service returned %d, holding for review", resp.StatusCode)
 			} else if err := json.NewDecoder(resp.Body).Decode(&fraudResp); err != nil {
-				log.Printf("failed to decode risk response, degrading to LOW: %v", err)
+				log.Printf("failed to decode risk response, holding for review: %v", err)
+			} else {
+				fraudOK = true
 			}
 		}
 
@@ -193,12 +204,9 @@ func main() {
 			status          string
 		)
 
-		// if the ml-service call failed, set the listing status to UNDER_REVIEW
 		if mlErr != nil {
-			log.Printf("ml-service call failed, holding for review: %v", mlErr)
-			status = "UNDER_REVIEW"
+			log.Printf("ml-service call failed: %v", mlErr)
 		} else {
-			status = decideStatus(mlResp.GetPolicyViolation(), fraudResp.RiskTier)
 			sp := mlResp.GetSuggestedPrice()
 			pl := mlResp.GetPriceLowerBound()
 			pu := mlResp.GetPriceUpperBound()
@@ -213,6 +221,24 @@ func main() {
 			product = &p
 			size = &sz
 			policyViolation = &pv
+		}
+
+		// fail closed: any dependency failure holds the listing for review.
+		degraded := mlErr != nil || !fraudOK
+		if degraded {
+			status = "UNDER_REVIEW"
+		} else {
+			status = decideStatus(mlResp.GetPolicyViolation(), fraudResp.RiskTier, fraudResp.VelocityFlags)
+		}
+
+		// NULL risk fields when fraud failed; reads back as UNSCORED instead of a false LOW.
+		var riskScore *float64
+		var riskTier *string
+		if fraudOK {
+			rs := fraudResp.RiskScore
+			rt := fraudResp.RiskTier
+			riskScore = &rs
+			riskTier = &rt
 		}
 
 		// update the listing in the database
@@ -238,8 +264,8 @@ func main() {
 			product,
 			size,
 			policyViolation,
-			fraudResp.RiskScore,
-			fraudResp.RiskTier,
+			riskScore,
+			riskTier,
 			event.ListingID,
 		)
 		if err != nil {
@@ -248,8 +274,8 @@ func main() {
 			return
 		}
 
-		// Enqueue a fresh listing.created event via the outbox
-		if mlErr != nil && event.Attempt < maxReanalysisAttempts {
+		// re-enqueue on degradation so the listing self-heals when the service recovers.
+		if degraded && event.Attempt < maxReanalysisAttempts {
 			next := event
 			next.Attempt = event.Attempt + 1
 			if payload, mErr := json.Marshal(next); mErr != nil {
@@ -261,8 +287,8 @@ func main() {
 			}
 		}
 
-		log.Printf("listing %s -> %s (risk=%s ml_ok=%v)",
-			event.ListingID, status, fraudResp.RiskTier, mlErr == nil)
+		log.Printf("listing %s -> %s (risk=%s ml_ok=%v fraud_ok=%v)",
+			event.ListingID, status, fraudResp.RiskTier, mlErr == nil, fraudOK)
 		msg.Ack()
 	})
 	if err != nil {

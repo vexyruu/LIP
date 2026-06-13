@@ -2,11 +2,15 @@ package handler
 
 import (
 	"context"
-	"net/http"
 	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
 
-	"github.com/vexyruu/LIP/shared/apitypes"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/vexyruu/LIP/shared/apitypes"
+	"github.com/vexyruu/LIP/shared/risk"
 )
 
 func (h *Handler) BanUser(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +36,6 @@ func (h *Handler) setUserBanned(ctx context.Context, userID string) error {
 	session := h.Neo4j.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
 
-	// Set the user as banned and set the risk score to 0.9
 	result, err := session.Run(ctx, `
 		MERGE (u:User {user_id: $userID})
 		SET u.banned = true, u.risk_score = 0.9
@@ -42,7 +45,19 @@ func (h *Handler) setUserBanned(ctx context.Context, userID string) error {
 	if err != nil {
 		return err
 	}
-	_, err = result.Consume(ctx)
-	return err
+	if _, err = result.Consume(ctx); err != nil {
+		return err
+	}
+
+	// flush Redis so GetRisk returns HIGH immediately, not after the next batch run.
+	bannedScore := risk.BatchScores{ComponentScore: 0.9}
+	payload, err := json.Marshal(bannedScore)
+	if err != nil {
+		return err
+	}
+	if err := h.Redis.Set(ctx, fmt.Sprintf("risk:%s", userID), payload, time.Hour).Err(); err != nil {
+		log.Printf("ban: failed to update Redis cache for user %s: %v", userID, err)
+	}
+	return nil
 }
 
