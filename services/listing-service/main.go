@@ -11,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/vexyruu/LIP/listing-service/handler"
+	"github.com/vexyruu/LIP/listing-service/store"
 	"github.com/vexyruu/LIP/shared/outbox"
 	"github.com/vexyruu/LIP/shared/postgres"
 	"github.com/vexyruu/LIP/shared/publisher"
@@ -73,13 +75,52 @@ func main() {
 
 	allowExternal, _ := strconv.ParseBool(envOr("ALLOW_EXTERNAL_IMAGE_URLS", "true"))
 
+	// optional: velocity tracking degrades gracefully if REDIS_ADDR is unset.
+	var redisClient *redis.Client
+	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
+		redisClient = redis.NewClient(&redis.Options{Addr: redisAddr})
+		defer redisClient.Close()
+		log.Println("Redis enabled for listing velocity tracking")
+	} else {
+		log.Println("REDIS_ADDR not set; listing velocity tracking disabled")
+	}
+
 	h := &handler.Handler{
 		Pool:                   pool,
 		FraudServiceURL:        fraudServiceURL,
 		Storage:                storageClient,
+		Redis:                  redisClient,
 		UploadPublicBaseURL:    envOr("UPLOAD_PUBLIC_BASE_URL", "http://localhost:9000/mlip-listings"),
 		AllowExternalImageURLs: allowExternal,
 	}
+
+	// Periodically purge expired PENDING uploads from the DB and S3.
+	go func() {
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				keys, err := store.PurgeExpiredUploads(ctx, pool)
+				if err != nil {
+					log.Printf("upload purge: db error: %v", err)
+					continue
+				}
+				if storageClient != nil {
+					for _, key := range keys {
+						if err := storageClient.DeleteObject(ctx, key); err != nil {
+							log.Printf("upload purge: failed to delete object %s: %v", key, err)
+						}
+					}
+				}
+				if len(keys) > 0 {
+					log.Printf("upload purge: removed %d expired uploads", len(keys))
+				}
+			}
+		}
+	}()
 
 	// Drain the transactional outbox to Pub/Sub in the background
 	poller := &outbox.Poller{
@@ -100,11 +141,16 @@ func main() {
 	mux.HandleFunc("DELETE /v1/listings/{id}/assign", h.UnassignListing)
 	mux.HandleFunc("GET /v1/analytics/summary", h.GetAnalytics)
 	mux.HandleFunc("GET /v1/moderation/decisions", h.ListModerationDecisions)
+	mux.HandleFunc("POST /v1/users", h.CreateUser)
 	mux.HandleFunc("GET /v1/users/{id}", h.GetUser)
 	mux.HandleFunc("GET /v1/users/{id}/listings", h.GetUserListings)
 	mux.HandleFunc("POST /v1/users/{id}/ban", h.BanUser)
 	mux.HandleFunc("POST /v1/uploads", h.CreateUpload)
 	mux.HandleFunc("POST /v1/uploads/{id}/complete", h.CompleteUpload)
+	mux.HandleFunc("GET /v1/moderators", h.ListModerators)
+	mux.HandleFunc("GET /v1/moderators/lookup", h.GetModeratorByEmail)
+	mux.HandleFunc("POST /v1/moderators", h.CreateModerator)
+	mux.HandleFunc("DELETE /v1/moderators/{id}", h.DeleteModerator)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
